@@ -41,7 +41,36 @@ data class RomEntity(
     val updatedAt: String?,
 )
 
-/** Tracks per-platform folder URIs chosen by the user via SAF. */
+/**
+ * The single base "ROMs" folder. Platform subfolders are created underneath it,
+ * so one SAF grant covers every platform instead of one grant per platform.
+ */
+@Entity(tableName = "base_folder")
+data class BaseFolderEntity(
+    @PrimaryKey val id: Int = SINGLETON_ID,
+    /** Persisted SAF tree URI (content://...) */
+    val folderUri: String,
+    /** Human-readable display path, shown in settings. */
+    val displayPath: String,
+) {
+    companion object { const val SINGLETON_ID = 0 }
+}
+
+/**
+ * Per-platform override of the subfolder name under the base folder, for users
+ * whose library does not follow the ES-DE naming convention.
+ */
+@Entity(tableName = "platform_subfolders")
+data class PlatformSubfolderEntity(
+    @PrimaryKey val platformId: Int,
+    val name: String,
+)
+
+/**
+ * Per-platform override pointing at a completely different directory, for
+ * platforms that live outside the base folder entirely. Takes precedence over
+ * the base folder.
+ */
 @Entity(tableName = "platform_folders")
 data class PlatformFolderEntity(
     @PrimaryKey val platformId: Int,
@@ -99,6 +128,36 @@ interface RomDao {
 
     @Query("SELECT MAX(updatedAt) FROM roms WHERE platformId = :platformId")
     suspend fun latestUpdatedAt(platformId: Int): String?
+}
+
+@Dao
+interface BaseFolderDao {
+    @Query("SELECT * FROM base_folder WHERE id = 0")
+    fun observe(): Flow<BaseFolderEntity?>
+
+    @Query("SELECT * FROM base_folder WHERE id = 0")
+    suspend fun get(): BaseFolderEntity?
+
+    @Upsert
+    suspend fun upsert(entity: BaseFolderEntity)
+
+    @Query("DELETE FROM base_folder")
+    suspend fun clear()
+}
+
+@Dao
+interface PlatformSubfolderDao {
+    @Query("SELECT * FROM platform_subfolders")
+    fun observeAll(): Flow<List<PlatformSubfolderEntity>>
+
+    @Query("SELECT * FROM platform_subfolders WHERE platformId = :platformId")
+    suspend fun getForPlatform(platformId: Int): PlatformSubfolderEntity?
+
+    @Upsert
+    suspend fun upsert(entity: PlatformSubfolderEntity)
+
+    @Query("DELETE FROM platform_subfolders WHERE platformId = :platformId")
+    suspend fun deleteForPlatform(platformId: Int)
 }
 
 @Dao

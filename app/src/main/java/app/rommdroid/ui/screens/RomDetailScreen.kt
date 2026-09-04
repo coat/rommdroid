@@ -24,10 +24,11 @@ import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 import app.rommdroid.data.api.model.DetailedRomSchema
 import app.rommdroid.data.api.model.RomFileSchema
-import app.rommdroid.data.db.PlatformFolderEntity
-import app.rommdroid.data.db.PlatformFolderDao
+import app.rommdroid.data.db.PlatformDao
 import app.rommdroid.data.download.DownloadWorker
 import app.rommdroid.data.repository.CredentialRepository
+import app.rommdroid.data.repository.DownloadTarget
+import app.rommdroid.data.repository.DownloadTargetRepository
 import app.rommdroid.data.repository.RomRepository
 import app.rommdroid.ui.navigation.Route
 import app.rommdroid.util.formatSize
@@ -46,7 +47,8 @@ class RomDetailViewModel @Inject constructor(
     savedStateHandle: SavedStateHandle,
     private val repo: RomRepository,
     private val credentials: CredentialRepository,
-    private val platformFolderDao: PlatformFolderDao,
+    private val platformDao: PlatformDao,
+    private val downloadTargets: DownloadTargetRepository,
     private val workManager: WorkManager,
 ) : ViewModel() {
 
@@ -55,8 +57,8 @@ class RomDetailViewModel @Inject constructor(
     private val _state = MutableStateFlow<RomDetailState>(RomDetailState.Loading)
     val state: StateFlow<RomDetailState> = _state.asStateFlow()
 
-    private val _platformFolder = MutableStateFlow<PlatformFolderEntity?>(null)
-    val platformFolder: StateFlow<PlatformFolderEntity?> = _platformFolder.asStateFlow()
+    private val _target = MutableStateFlow<DownloadTarget?>(null)
+    val target: StateFlow<DownloadTarget?> = _target.asStateFlow()
 
     /** Live state of every download enqueued for this ROM, keyed by file id. */
     val downloads: StateFlow<Map<Int, WorkInfo>> =
@@ -81,7 +83,8 @@ class RomDetailViewModel @Inject constructor(
             try {
                 val rom = repo.getRomDetail(romId)
                 _state.value = RomDetailState.Loaded(rom)
-                _platformFolder.value = platformFolderDao.getForPlatform(rom.platformId)
+                _target.value = platformDao.getById(rom.platformId)
+                    ?.let { downloadTargets.resolve(it) }
             } catch (e: Exception) {
                 android.util.Log.e("RomDetail", "Failed to load ROM $romId", e)
                 _state.value = RomDetailState.Error(e.message ?: "Failed to load ROM")
@@ -102,7 +105,7 @@ class RomDetailViewModel @Inject constructor(
      */
     fun downloadFile(file: RomFileSchema): Boolean {
         val rom = (_state.value as? RomDetailState.Loaded)?.rom ?: return false
-        val folder = _platformFolder.value ?: return false
+        val target = _target.value ?: return false
         val serverUrl = credentials.serverUrl ?: return false
 
         // For synthetic single-file ROMs (id=0), don't pass file_ids — the API
@@ -121,9 +124,10 @@ class RomDetailViewModel @Inject constructor(
         val inputData = DownloadWorker.buildRequest(
             url            = url,
             fileName       = file.fileName,
-            destinationUri = folder.folderUri,
+            destinationUri = target.treeUri,
             romId          = rom.id,
             expectedBytes  = file.fileSizeBytes,
+            subfolder      = target.subfolder,
         )
 
         val request = OneTimeWorkRequestBuilder<DownloadWorker>()
@@ -161,7 +165,7 @@ fun RomDetailScreen(
     onBack: () -> Unit,
 ) {
     val state          by viewModel.state.collectAsState()
-    val platformFolder by viewModel.platformFolder.collectAsState()
+    val target         by viewModel.target.collectAsState()
     val downloads      by viewModel.downloads.collectAsState()
 
     var showNoFolderDialog by remember { mutableStateOf(false) }
@@ -241,7 +245,7 @@ fun RomDetailScreen(
 
                     // Folder status / warning
                     item {
-                        if (platformFolder == null) {
+                        if (target == null) {
                             Card(
                                 colors   = CardDefaults.cardColors(
                                     containerColor = MaterialTheme.colorScheme.errorContainer
@@ -255,8 +259,8 @@ fun RomDetailScreen(
                                     Icon(Icons.Default.FolderOpen, contentDescription = null)
                                     Spacer(Modifier.width(8.dp))
                                     Text(
-                                        "No download folder set for ${rom.platformDisplayName}. " +
-                                            "Go to Settings → Folder Mapping to configure it.",
+                                        "No ROMs folder set. Go to Settings → Folder Mapping " +
+                                            "and choose your ROMs directory.",
                                         style = MaterialTheme.typography.bodySmall,
                                     )
                                 }
@@ -264,7 +268,7 @@ fun RomDetailScreen(
                             Spacer(Modifier.height(8.dp))
                         } else {
                             Text(
-                                "Downloads to: ${platformFolder!!.displayPath}",
+                                "Downloads to: ${target!!.displayPath}",
                                 style    = MaterialTheme.typography.labelSmall,
                                 modifier = Modifier.padding(horizontal = 16.dp),
                             )
@@ -283,7 +287,7 @@ fun RomDetailScreen(
                     items(rom.files) { file ->
                         RomFileRow(
                             file        = file,
-                            canDownload = platformFolder != null,
+                            canDownload = target != null,
                             workInfo    = downloads[file.id],
                             onDownload  = {
                                 val ok = viewModel.downloadFile(file)
@@ -304,7 +308,7 @@ fun RomDetailScreen(
                             )
                             RomFileRow(
                                 file        = syntheticFile,
-                                canDownload = platformFolder != null,
+                                canDownload = target != null,
                                 workInfo    = downloads[syntheticFile.id],
                                 onDownload  = {
                                     val ok = viewModel.downloadFile(syntheticFile)
@@ -321,7 +325,7 @@ fun RomDetailScreen(
             AlertDialog(
                 onDismissRequest = { showNoFolderDialog = false },
                 title = { Text("No folder configured") },
-                text  = { Text("Set a download folder for this platform in Settings → Folder Mapping.") },
+                text  = { Text("Choose your ROMs folder in Settings → Folder Mapping.") },
                 confirmButton = {
                     TextButton(onClick = { showNoFolderDialog = false }) { Text("OK") }
                 },

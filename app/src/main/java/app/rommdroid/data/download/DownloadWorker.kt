@@ -41,6 +41,7 @@ class DownloadWorker @AssistedInject constructor(
         const val KEY_URL             = "url"
         const val KEY_FILE_NAME       = "file_name"
         const val KEY_DESTINATION_URI = "destination_uri"  // SAF tree URI (content://...)
+        const val KEY_SUBFOLDER       = "subfolder"        // optional dir under the tree
         const val KEY_ROM_ID          = "rom_id"
         const val KEY_EXPECTED_BYTES  = "expected_bytes"
 
@@ -58,10 +59,12 @@ class DownloadWorker @AssistedInject constructor(
             destinationUri: String,
             romId: Int,
             expectedBytes: Long,
+            subfolder: String? = null,
         ) = Data.Builder()
             .putString(KEY_URL, url)
             .putString(KEY_FILE_NAME, fileName)
             .putString(KEY_DESTINATION_URI, destinationUri)
+            .putString(KEY_SUBFOLDER, subfolder)
             .putInt(KEY_ROM_ID, romId)
             .putLong(KEY_EXPECTED_BYTES, expectedBytes)
             .build()
@@ -78,6 +81,7 @@ class DownloadWorker @AssistedInject constructor(
         val fileName       = inputData.getString(KEY_FILE_NAME)       ?: return fail("Missing file name")
         val destUriString  = inputData.getString(KEY_DESTINATION_URI) ?: return fail("Missing destination folder")
         val expectedBytes  = inputData.getLong(KEY_EXPECTED_BYTES, -1L)
+        val subfolder      = inputData.getString(KEY_SUBFOLDER)
 
         Log.i(TAG, "Starting download of $fileName from $url")
 
@@ -85,7 +89,7 @@ class DownloadWorker @AssistedInject constructor(
         notifyProgress(fileName, 0, expectedBytes)
 
         return try {
-            download(url, fileName, destUriString, expectedBytes)
+            download(url, fileName, destUriString, subfolder, expectedBytes)
             Log.i(TAG, "Finished download of $fileName")
             Result.success()
         } catch (e: IOException) {
@@ -110,6 +114,7 @@ class DownloadWorker @AssistedInject constructor(
         url: String,
         fileName: String,
         destUriString: String,
+        subfolder: String?,
         expectedBytes: Long,
     ) {
         // Prefer the client API token; fall back to Basic auth, which is all
@@ -132,11 +137,15 @@ class DownloadWorker @AssistedInject constructor(
 
             // Resolve the destination SAF folder and create/overwrite the file
             val treeUri = destUriString.toUri()
-            val dir = DocumentFile.fromTreeUri(applicationContext, treeUri)
+            val root = DocumentFile.fromTreeUri(applicationContext, treeUri)
                 ?: throw IOException("Cannot open destination folder")
-            if (!dir.canWrite()) {
+            if (!root.canWrite()) {
                 throw IOException("No write permission for destination folder — re-select it in Settings → Folder Mapping")
             }
+
+            // A subfolder means the grant is on the base ROMs directory, so the
+            // per-platform directory is ours to create on first download.
+            val dir = if (subfolder.isNullOrBlank()) root else resolveSubfolder(root, subfolder)
 
             // Delete existing file if present (resumable would be nicer, but
             // SAF doesn't support partial writes; simplicity wins here)
@@ -167,6 +176,24 @@ class DownloadWorker @AssistedInject constructor(
                 setProgress(workDataOf(PROGRESS_BYTES to downloaded, PROGRESS_TOTAL to total))
             } ?: throw IOException("Cannot open output stream")
         }
+    }
+
+    /**
+     * Finds or creates [name] directly under [parent].
+     *
+     * An existing entry that is a file rather than a directory would otherwise
+     * make createDirectory() silently produce a second entry with the same name,
+     * so that case is reported instead.
+     */
+    private fun resolveSubfolder(parent: DocumentFile, name: String): DocumentFile {
+        val existing = parent.findFile(name)
+        if (existing != null) {
+            if (!existing.isDirectory) throw IOException("\"$name\" exists but is not a folder")
+            return existing
+        }
+        Log.i(TAG, "Creating subfolder $name")
+        return parent.createDirectory(name)
+            ?: throw IOException("Cannot create folder \"$name\" in the ROMs directory")
     }
 
     /**
