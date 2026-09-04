@@ -8,3 +8,22 @@
 #
 # For Android Studio: File → Project Structure → SDK Location
 # points here automatically when the flake shell is active.
+
+# ── Release signing ──────────────────────────────────────────────────────────
+# A release APK must be signed or Android rejects it with "package appears to
+# be invalid" at install time. Create a keystore once:
+#
+#   keytool -genkeypair -v -keystore keystore.jks -alias rommdroid \
+#           -keyalg RSA -keysize 4096 -validity 10000
+#
+# keystore.jks is gitignored. Keep a backup — losing it means you can never
+# ship an upgrade to an already-installed copy of the app.
+#
+# Paths are relative to the project root. CI can use the env vars
+# RELEASE_STORE_FILE / RELEASE_STORE_PASSWORD / RELEASE_KEY_ALIAS /
+# RELEASE_KEY_PASSWORD instead.
+#
+# release.storeFile=keystore.jks
+# release.storePassword=
+# release.keyAlias=rommdroid
+# release.keyPassword=

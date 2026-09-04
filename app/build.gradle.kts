@@ -1,3 +1,5 @@
+import java.util.Properties
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
@@ -25,8 +27,32 @@ android {
         resValue("string", "app_display_name", "RomMDroid")
     }
 
+    // Release signing. Values come from local.properties (untracked) or, for CI,
+    // the matching env vars. Without them the release build stays unsigned and
+    // will not install on a device.
+    val keystoreProps = Properties().apply {
+        val f = rootProject.file("local.properties")
+        if (f.exists()) f.inputStream().use { load(it) }
+    }
+    fun signingValue(key: String, env: String): String? =
+        keystoreProps.getProperty(key) ?: System.getenv(env)
+
+    val releaseStorePath = signingValue("release.storeFile", "RELEASE_STORE_FILE")
+
+    signingConfigs {
+        if (releaseStorePath != null) {
+            create("release") {
+                storeFile     = rootProject.file(releaseStorePath)
+                storePassword = signingValue("release.storePassword", "RELEASE_STORE_PASSWORD")
+                keyAlias      = signingValue("release.keyAlias", "RELEASE_KEY_ALIAS")
+                keyPassword   = signingValue("release.keyPassword", "RELEASE_KEY_PASSWORD")
+            }
+        }
+    }
+
     buildTypes {
         release {
+            signingConfig     = signingConfigs.findByName("release")
             isMinifyEnabled   = true
             isShrinkResources = true
             proguardFiles(
