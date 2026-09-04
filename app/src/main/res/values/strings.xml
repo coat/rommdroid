@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Change this to rename the app without touching build files -->
+    <string name="app_name">RomMDroid</string>
+</resources>

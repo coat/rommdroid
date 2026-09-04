@@ -1,0 +1,10 @@
+# Copy to local.properties and fill in your values.
+# This file is NOT committed to git.
+#
+# When using the Nix flake, ANDROID_SDK_ROOT is set by the dev shell;
+# you can either leave this blank or point it explicitly.
+#
+# sdk.dir=/path/to/android-sdk
+#
+# For Android Studio: File → Project Structure → SDK Location
+# points here automatically when the flake shell is active.
