@@ -50,9 +50,23 @@ class SearchViewModel @Inject constructor(
 
     val query = MutableStateFlow("")
 
+    private val _offline = MutableStateFlow(false)
+    /** True when the last search fell back to the (partial) local cache. */
+    val offline: StateFlow<Boolean> = _offline.asStateFlow()
+
     val results: StateFlow<List<RomEntity>> = query
         .debounce(300)
-        .mapLatest { q -> if (q.length >= 2) repo.searchLocal(q) else emptyList() }
+        .mapLatest { q ->
+            if (q.length < 2) return@mapLatest emptyList()
+            // Search the server so every platform is covered, not just the ones
+            // already synced into Room; drop to the cache only if it is down.
+            try {
+                repo.searchRemote(q).also { _offline.value = false }
+            } catch (e: Exception) {
+                _offline.value = true
+                repo.searchLocal(q)
+            }
+        }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 }
 
@@ -65,6 +79,7 @@ fun SearchScreen(
 ) {
     val query   by viewModel.query.collectAsState()
     val results by viewModel.results.collectAsState()
+    val offline by viewModel.offline.collectAsState()
 
     Scaffold(
         topBar = {
@@ -87,6 +102,18 @@ fun SearchScreen(
         }
     ) { padding ->
         LazyColumn(Modifier.fillMaxSize().padding(padding)) {
+            if (offline) {
+                item {
+                    ListItem(
+                        headlineContent  = { Text("Server unreachable") },
+                        supportingContent = {
+                            Text("Showing downloaded platforms only.")
+                        },
+                        leadingContent   = { Icon(Icons.Default.CloudOff, null) },
+                    )
+                    HorizontalDivider()
+                }
+            }
             items(results, key = { it.id }) { rom ->
                 ListItem(
                     modifier          = Modifier.clickable { onRomClick(rom.id) },

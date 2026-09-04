@@ -67,7 +67,11 @@ interface RomMApi {
      * Paginated ROM list with extensive filtering.
      *
      * Pass [withFiles] = true to inline file list (costs more bandwidth).
-     * Pass [groupByMetaId] = true (the default) to deduplicate regional variants.
+     *
+     * [groupByMetaId] = 1 collapses regional variants down to one entry per
+     * matched game, which hides real ROMs the server would otherwise return
+     * (441 Game Boy ROMs become 340).  The server default is 0 and that is what
+     * the web UI shows, so we match it.
      *
      * Disable [withCharIndex], [withRomIdIndex], [withFilterValues] for lean
      * programmatic access (they add significant response size for UI niceties
@@ -75,15 +79,16 @@ interface RomMApi {
      */
     @GET("api/roms")
     suspend fun getRoms(
-        @Query("platform_id")       platformId: Int? = null,
-        @Query("platform_ids")      platformIds: Int? = null,   // same value — forward-compat shim
+        // Platform filtering is "platform_ids"; RomM ignores an unknown
+        // "platform_id" silently and returns the whole library instead.
+        @Query("platform_ids")      platformIds: Int? = null,
         @Query("collection_id")     collectionId: Int? = null,
         @Query("search_term")       searchTerm: String? = null,
         @Query("limit")             limit: Int = 50,
         @Query("offset")            offset: Int = 0,
         @Query("order_by")          orderBy: String = "name",
         @Query("order_dir")         orderDir: String = "asc",
-        @Query("group_by_meta_id")  groupByMetaId: Int = 1,
+        @Query("group_by_meta_id")  groupByMetaId: Int = 0,
         @Query("with_files")        withFiles: Boolean = false,
         @Query("with_char_index")   withCharIndex: Boolean = false,
         @Query("with_rom_id_index") withRomIdIndex: Boolean = false,

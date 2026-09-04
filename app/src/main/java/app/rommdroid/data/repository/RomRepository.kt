@@ -50,8 +50,7 @@ class RomRepository @Inject constructor(
         val pageSize = 100
         do {
             val page = api.getRoms(
-                platformId  = platformId,
-                platformIds = platformId,   // forward-compat shim
+                platformIds = platformId,
                 limit       = pageSize,
                 offset      = offset,
                 withCharIndex    = false,
@@ -71,6 +70,24 @@ class RomRepository @Inject constructor(
         )
     }
 
+    /**
+     * Search the whole library on the server.
+     *
+     * Deliberately not a Room query: the cache only ever holds the platforms the
+     * user has actually opened, so a local search silently returns a fraction of
+     * what the web UI finds for the same term.  Callers should fall back to
+     * [searchLocal] when this throws so search still works offline.
+     */
+    suspend fun searchRemote(query: String, limit: Int = 100): List<RomEntity> =
+        api.getRoms(
+            searchTerm = query,
+            limit      = limit,
+            withCharIndex    = false,
+            withRomIdIndex   = false,
+            withFilterValues = false,
+        ).items.map { it.toEntity() }
+
+    /** Offline fallback — only covers platforms that have been synced. */
     suspend fun searchLocal(query: String): List<RomEntity> = romDao.search(query)
 
     // ── Download URL construction ─────────────────────────────────────────────
