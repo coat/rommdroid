@@ -101,8 +101,20 @@ data class PagedRomResponse(
 @Serializable
 data class RomFileSchema(
     val id: Int,
-    @SerialName("file_name") val fileName: String,
-    @SerialName("file_size_bytes") val fileSizeBytes: Long = 0L,
+    @SerialName("rom_id")           val romId: Int = 0,
+    @SerialName("file_name")        val fileName: String = "",
+    @SerialName("file_path")        val filePath: String = "",
+    @SerialName("file_size_bytes")  val fileSizeBytes: Long = 0L,
+    @SerialName("full_path")        val fullPath: String = "",
+    @SerialName("is_top_level")     val isTopLevel: Boolean = true,
+    @SerialName("created_at")       val createdAt: String = "",
+    @SerialName("updated_at")       val updatedAt: String = "",
+    @SerialName("last_modified")    val lastModified: String = "",
+    @SerialName("crc_hash")         val crcHash: String? = null,
+    @SerialName("md5_hash")         val md5Hash: String? = null,
+    @SerialName("sha1_hash")        val sha1Hash: String? = null,
+    @SerialName("ra_hash")          val raHash: String? = null,
+    @SerialName("chd_sha1_hash")    val chdSha1Hash: String? = null,
 )
 
 @Serializable
