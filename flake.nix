@@ -74,6 +74,13 @@
           # Make adb / emulator available without full PATH tricks
           export PATH="$ANDROID_SDK_ROOT/platform-tools:$ANDROID_SDK_ROOT/emulator:$PATH"
 
+          # AGP downloads its own aapt2 from Maven — a generic-linux binary that
+          # NixOS cannot exec. Point it at the SDK's patchelf'd copy instead.
+          # Passed as -D rather than in gradle.properties so the /nix/store path
+          # stays out of the repo, and because the property name contains dots
+          # (ORG_GRADLE_PROJECT_* env vars cannot express those).
+          export GRADLE_OPTS="''${GRADLE_OPTS:-} -Dorg.gradle.project.android.aapt2FromMavenOverride=$ANDROID_SDK_ROOT/build-tools/${builtins.head androidSdkConfig.buildToolsVersions}/aapt2"
+
           echo "RomMDroid dev shell ready"
           echo "  ANDROID_SDK_ROOT = $ANDROID_SDK_ROOT"
           echo "  JAVA_HOME        = $JAVA_HOME"
@@ -114,7 +121,8 @@
             export ANDROID_HOME="$ANDROID_SDK_ROOT"
             export JAVA_HOME="${pkgs.jdk21}"
             export GRADLE_USER_HOME="$TMPDIR/.gradle"
-            gradle assembleDebug --no-daemon
+            gradle assembleDebug --no-daemon \
+              -Dorg.gradle.project.android.aapt2FromMavenOverride="$ANDROID_SDK_ROOT/build-tools/${builtins.head androidSdkConfig.buildToolsVersions}/aapt2"
           '';
 
           installPhase = ''
