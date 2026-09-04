@@ -86,7 +86,10 @@ class RomDetailViewModel @Inject constructor(
         val folder = _platformFolder.value ?: return false
         val serverUrl = credentials.serverUrl ?: return false
 
-        val url = repo.romDownloadUrl(serverUrl, rom.id, file.fileName, listOf(file.id))
+        // For synthetic single-file ROMs (id=0), don't pass file_ids — the API
+        // will serve the primary file by name without needing an ID filter.
+        val fileIds = if (file.id == 0) emptyList() else listOf(file.id)
+        val url = repo.romDownloadUrl(serverUrl, rom.id, file.fileName, fileIds)
 
         val inputData = DownloadWorker.buildRequest(
             url            = url,
@@ -239,7 +242,7 @@ fun RomDetailScreen(
                     }
                     items(rom.files) { file ->
                         RomFileRow(
-                            file     = file,
+                            file        = file,
                             canDownload = platformFolder != null,
                             onDownload  = {
                                 val ok = viewModel.downloadFile(file)
@@ -248,19 +251,22 @@ fun RomDetailScreen(
                         )
                         HorizontalDivider()
                     }
-                    // If no files yet, show the primary fs_name as a single downloadable item
+                    // If the API returned no files list, synthesize one from fs_name
+                    // so there is always something to download.
                     if (rom.files.isEmpty()) {
                         item {
+                            val syntheticFile = RomFileSchema(
+                                id            = 0,
+                                romId         = rom.id,
+                                fileName      = rom.fsName,
+                                fileSizeBytes = rom.fsSizeBytes,
+                            )
                             RomFileRow(
-                                file = RomFileSchema(
-                                    id           = 0,
-                                    fileName     = rom.fsName,
-                                    fileSizeBytes = rom.fsSizeBytes,
-                                ),
+                                file        = syntheticFile,
                                 canDownload = platformFolder != null,
                                 onDownload  = {
-                                    showNoFolderDialog = platformFolder == null
-                                    // TODO: enqueue single-file download
+                                    val ok = viewModel.downloadFile(syntheticFile)
+                                    if (!ok) showNoFolderDialog = true
                                 }
                             )
                         }
