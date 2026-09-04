@@ -65,6 +65,7 @@ class RomDetailViewModel @Inject constructor(
                 _state.value = RomDetailState.Loaded(rom)
                 _platformFolder.value = platformFolderDao.getForPlatform(rom.platformId)
             } catch (e: Exception) {
+                android.util.Log.e("RomDetail", "Failed to load ROM $romId", e)
                 _state.value = RomDetailState.Error(e.message ?: "Failed to load ROM")
             }
         }
