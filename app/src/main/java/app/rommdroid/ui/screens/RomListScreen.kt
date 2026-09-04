@@ -25,6 +25,7 @@ import app.rommdroid.data.db.PlatformEntity
 import app.rommdroid.data.repository.CredentialRepository
 import app.rommdroid.data.repository.RomRepository
 import app.rommdroid.ui.navigation.Route
+import app.rommdroid.util.artworkUrl
 import app.rommdroid.util.formatSize
 import javax.inject.Inject
 
@@ -65,11 +66,12 @@ class RomListViewModel @Inject constructor(
         }
     }
 
-    fun coverUrl(rom: RomEntity): String? {
-        val server = credentials.serverUrl ?: return null
-        val cover  = rom.urlCover ?: return null
-        return if (cover.startsWith("http")) cover else "$server/$cover"
-    }
+    fun coverUrl(rom: RomEntity): String? = artworkUrl(
+        credentials.serverUrl,
+        rom.pathCoverSmall,
+        rom.pathCoverLarge,
+        rom.urlCover,
+    )
 }
 
 // ── Screen ────────────────────────────────────────────────────────────────────

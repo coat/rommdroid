@@ -20,6 +20,7 @@ import kotlinx.coroutines.launch
 import app.rommdroid.data.db.PlatformEntity
 import app.rommdroid.data.repository.CredentialRepository
 import app.rommdroid.data.repository.RomRepository
+import app.rommdroid.util.artworkUrl
 import app.rommdroid.util.formatSize
 import javax.inject.Inject
 
@@ -59,11 +60,10 @@ class PlatformListViewModel @Inject constructor(
         }
     }
 
-    fun coverUrl(platform: PlatformEntity): String? {
-        val server = credentials.serverUrl ?: return null
-        val logo   = platform.urlLogo ?: return null
-        return if (logo.startsWith("http")) logo else "$server/$logo"
-    }
+    fun coverUrl(platform: PlatformEntity): String? = artworkUrl(
+        credentials.serverUrl,
+        platform.urlLogo,
+    )
 }
 
 // ── Screen ────────────────────────────────────────────────────────────────────
