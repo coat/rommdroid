@@ -48,21 +48,27 @@ class SetupViewModel @Inject constructor(
                 credentials.serverUrl = serverUrl.trimEnd('/')
                 credentials.setBasicCredentials(username, password)
 
-                // Verify server is reachable
+                // Verify server is reachable (Basic auth is attached by AuthInterceptor)
                 api.heartbeat()
 
-                // Create a client token for ongoing use
+                // Create a client token — Basic auth is used for this request
                 val tokenResp = api.createClientToken(
-                    app.rommdroid.data.api.model.CreateTokenRequest("RomMDroid")
+                    app.rommdroid.data.api.model.CreateTokenRequest(name = "RomMDroid")
                 )
-                // The token is returned on creation; save it and drop the password
-                if (tokenResp.token != null) {
-                    credentials.apiToken = tokenResp.token
+                // raw_token is present only on creation; save it and drop the password
+                if (tokenResp.rawToken != null) {
+                    credentials.apiToken = tokenResp.rawToken
                     credentials.clearPassword()
                 }
+                // Even if token creation failed (e.g. permissions), we can still proceed
+                // using Basic auth for now — the token will be null and AuthInterceptor
+                // falls back to Basic automatically.
 
                 _state.value = SetupState.Done
             } catch (e: Exception) {
+                // Clean up partial state so the user can retry cleanly
+                credentials.serverUrl = null
+                credentials.clearAll()
                 _state.value = SetupState.Error(e.message ?: "Connection failed")
             }
         }

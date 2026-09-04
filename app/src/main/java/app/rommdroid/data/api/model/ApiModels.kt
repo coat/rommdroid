@@ -6,10 +6,24 @@ import kotlinx.serialization.Serializable
 // ── Auth / Setup ──────────────────────────────────────────────────────────────
 
 @Serializable
-data class HeartbeatResponse(
-    val version: String,
-    @SerialName("show_setup_wizard") val showSetupWizard: Boolean = false,
+data class HeartbeatSystem(
+    @SerialName("VERSION")          val version: String = "",
+    @SerialName("SHOW_SETUP_WIZARD") val showSetupWizard: Boolean = false,
 )
+
+@Serializable
+data class HeartbeatFrontend(
+    @SerialName("DISABLE_USERPASS_LOGIN") val disableUserpassLogin: Boolean = false,
+)
+
+@Serializable
+data class HeartbeatResponse(
+    @SerialName("SYSTEM")   val system: HeartbeatSystem = HeartbeatSystem(),
+    @SerialName("FRONTEND") val frontend: HeartbeatFrontend = HeartbeatFrontend(),
+) {
+    val version: String get() = system.version
+    val showSetupWizard: Boolean get() = system.showSetupWizard
+}
 
 @Serializable
 data class UserResponse(
@@ -22,15 +36,30 @@ data class UserResponse(
 @Serializable
 data class CreateTokenRequest(
     val name: String,
+    /** At least one scope required by the API. Request all read scopes for a companion app. */
+    val scopes: List<String> = listOf(
+        "roms.read", "platforms.read", "collections.read",
+        "firmware.read", "me.read", "tasks.read",
+    ),
+    @SerialName("expires_in") val expiresIn: String? = null,
 )
 
 @Serializable
 data class ClientTokenResponse(
     val id: Int,
     val name: String,
-    /** The actual rmm_… token value; only present on create / exchange. */
-    val token: String? = null,
-)
+    val scopes: List<String> = emptyList(),
+    @SerialName("expires_at")   val expiresAt: String? = null,
+    @SerialName("last_used_at") val lastUsedAt: String? = null,
+    @SerialName("created_at")   val createdAt: String = "",
+    @SerialName("user_id")      val userId: Int = 0,
+    @SerialName("device_id")    val deviceId: String? = null,
+    /** Only present on token creation (ClientTokenCreateSchema). */
+    @SerialName("raw_token")    val rawToken: String? = null,
+) {
+    /** Convenience alias — the actual token value to store. */
+    val token: String? get() = rawToken
+}
 
 @Serializable
 data class PairResponse(
