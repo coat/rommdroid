@@ -31,3 +31,7 @@
 -keep class * extends androidx.work.ListenableWorker {
     public <init>(android.content.Context, androidx.work.WorkerParameters);
 }
+
+# Tink (via androidx.security-crypto) references Error Prone annotations that are
+# compile-only and not on the runtime classpath.
+-dontwarn com.google.errorprone.annotations.**
