@@ -31,6 +31,7 @@ import app.rommdroid.data.repository.DownloadTarget
 import app.rommdroid.data.repository.DownloadTargetRepository
 import app.rommdroid.data.repository.RomRepository
 import app.rommdroid.ui.navigation.Route
+import app.rommdroid.util.artworkUrl
 import app.rommdroid.util.formatSize
 import javax.inject.Inject
 
@@ -92,11 +93,12 @@ class RomDetailViewModel @Inject constructor(
         }
     }
 
-    fun coverUrl(rom: DetailedRomSchema): String? {
-        val server = credentials.serverUrl ?: return null
-        val cover  = rom.urlCover ?: return null
-        return if (cover.startsWith("http")) cover else "$server/$cover"
-    }
+    fun coverUrl(rom: DetailedRomSchema): String? = artworkUrl(
+        credentials.serverUrl,
+        rom.pathCoverLarge,
+        rom.pathCoverSmall,
+        rom.urlCover,
+    )
 
     /**
      * Enqueue a WorkManager download for [file].
