@@ -18,6 +18,10 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.jsonObject
+import retrofit2.HttpException
 import app.rommdroid.data.api.RomMApi
 import app.rommdroid.data.repository.CredentialRepository
 import javax.inject.Inject
@@ -69,10 +73,28 @@ class SetupViewModel @Inject constructor(
                 // Clean up partial state so the user can retry cleanly
                 credentials.serverUrl = null
                 credentials.clearAll()
-                _state.value = SetupState.Error(e.message ?: "Connection failed")
+                _state.value = SetupState.Error(e.describe())
             }
         }
     }
+}
+
+/**
+ * A bare Retrofit [HttpException] only says "HTTP 422 Unprocessable Content",
+ * which hides the reason the server gave.  RomM puts that in a JSON "detail"
+ * field, so pull it out when it's there.
+ */
+private fun Exception.describe(): String {
+    val fallback = message ?: "Connection failed"
+    if (this !is HttpException) return fallback
+    val body = response()?.errorBody()?.string().orEmpty()
+    val detail = runCatching {
+        Json { ignoreUnknownKeys = true }
+            .parseToJsonElement(body)
+            .jsonObject["detail"]
+            ?.let { if (it is JsonPrimitive) it.content else it.toString() }
+    }.getOrNull()
+    return if (detail.isNullOrBlank()) fallback else "$fallback: $detail"
 }
 
 // ── Screen ────────────────────────────────────────────────────────────────────

@@ -36,10 +36,14 @@ data class UserResponse(
 @Serializable
 data class CreateTokenRequest(
     val name: String,
-    /** At least one scope required by the API. Request all read scopes for a companion app. */
+    /**
+     * At least one scope is required by the API, and every requested scope must
+     * exist and be held by the user or the server answers 403.  These are all
+     * from RomM's READ_SCOPES, which the lowest "viewer" role already has.
+     */
     val scopes: List<String> = listOf(
         "roms.read", "platforms.read", "collections.read",
-        "firmware.read", "me.read", "tasks.read",
+        "firmware.read", "me.read",
     ),
     @SerialName("expires_in") val expiresIn: String? = null,
 )

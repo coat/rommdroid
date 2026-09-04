@@ -31,6 +31,10 @@ object NetworkModule {
         ignoreUnknownKeys = true
         coerceInputValues  = true
         isLenient          = true
+        // Request bodies rely on Kotlin defaults (e.g. CreateTokenRequest.scopes).
+        // Without this, kotlinx.serialization drops any field equal to its default
+        // and the server rejects the body as missing a required field (422).
+        encodeDefaults     = true
     }
 
     @Provides
