@@ -3,8 +3,9 @@ package app.rommdroid.data.download
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.content.Context
-import android.net.Uri
+import android.content.pm.ServiceInfo
 import android.os.Build
+import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.net.toUri
 import androidx.documentfile.provider.DocumentFile
@@ -14,7 +15,6 @@ import dagger.assisted.Assisted
 import dagger.assisted.AssistedInject
 import okhttp3.OkHttpClient
 import okhttp3.Request
-import app.rommdroid.R
 import app.rommdroid.data.repository.CredentialRepository
 import java.io.IOException
 import java.util.concurrent.TimeUnit
@@ -36,6 +36,8 @@ class DownloadWorker @AssistedInject constructor(
 ) : CoroutineWorker(context, params) {
 
     companion object {
+        private const val TAG = "DownloadWorker"
+
         const val KEY_URL             = "url"
         const val KEY_FILE_NAME       = "file_name"
         const val KEY_DESTINATION_URI = "destination_uri"  // SAF tree URI (content://...)
@@ -44,6 +46,9 @@ class DownloadWorker @AssistedInject constructor(
 
         const val PROGRESS_BYTES      = "bytes_downloaded"
         const val PROGRESS_TOTAL      = "total_bytes"
+
+        /** Present in the worker's output data when it ends in [Result.failure]. */
+        const val KEY_ERROR           = "error"
 
         const val NOTIFICATION_CHANNEL = "downloads"
 
@@ -69,20 +74,36 @@ class DownloadWorker @AssistedInject constructor(
         .build()
 
     override suspend fun doWork(): Result {
-        val url            = inputData.getString(KEY_URL)           ?: return Result.failure()
-        val fileName       = inputData.getString(KEY_FILE_NAME)     ?: return Result.failure()
-        val destUriString  = inputData.getString(KEY_DESTINATION_URI) ?: return Result.failure()
+        val url            = inputData.getString(KEY_URL)             ?: return fail("Missing download URL")
+        val fileName       = inputData.getString(KEY_FILE_NAME)       ?: return fail("Missing file name")
+        val destUriString  = inputData.getString(KEY_DESTINATION_URI) ?: return fail("Missing destination folder")
         val expectedBytes  = inputData.getLong(KEY_EXPECTED_BYTES, -1L)
 
+        Log.i(TAG, "Starting download of $fileName from $url")
+
         createNotificationChannel()
-        setForeground(buildForegroundInfo(fileName, 0, expectedBytes))
+        notifyProgress(fileName, 0, expectedBytes)
 
         return try {
             download(url, fileName, destUriString, expectedBytes)
+            Log.i(TAG, "Finished download of $fileName")
             Result.success()
         } catch (e: IOException) {
-            if (runAttemptCount < 3) Result.retry() else Result.failure()
+            Log.e(TAG, "Download of $fileName failed (attempt $runAttemptCount)", e)
+            if (runAttemptCount < 3) Result.retry()
+            else fail(e.message ?: "Download failed")
+        } catch (e: Exception) {
+            // SecurityException (revoked SAF grant), IllegalStateException
+            // (foreground service refused), IllegalArgumentException (bad URL)…
+            // Without this the worker died with no trace and no user feedback.
+            Log.e(TAG, "Download of $fileName failed unrecoverably", e)
+            fail("${e.javaClass.simpleName}: ${e.message}")
         }
+    }
+
+    private fun fail(message: String): Result {
+        Log.e(TAG, "Download failed: $message")
+        return Result.failure(workDataOf(KEY_ERROR to message))
     }
 
     private suspend fun download(
@@ -91,14 +112,20 @@ class DownloadWorker @AssistedInject constructor(
         destUriString: String,
         expectedBytes: Long,
     ) {
-        val token = credentials.apiToken
+        // Prefer the client API token; fall back to Basic auth, which is all
+        // that is stored when token creation was refused during setup. Sending
+        // no credentials at all just yields a 403 from RomM.
+        val authHeader = credentials.apiToken?.let { "Bearer $it" }
+            ?: credentials.basicAuthHeader
+        if (authHeader == null) Log.w(TAG, "No credentials stored — request will be unauthenticated")
+
         val request = Request.Builder()
             .url(url)
-            .apply { if (token != null) header("Authorization", "Bearer $token") }
+            .apply { if (authHeader != null) header("Authorization", authHeader) }
             .build()
 
         downloadClient.newCall(request).execute().use { response ->
-            if (!response.isSuccessful) throw IOException("HTTP ${response.code}")
+            if (!response.isSuccessful) throw IOException("HTTP ${response.code} ${response.message}")
 
             val body = response.body ?: throw IOException("Empty response body")
             val total = if (expectedBytes > 0) expectedBytes else body.contentLength()
@@ -107,6 +134,9 @@ class DownloadWorker @AssistedInject constructor(
             val treeUri = destUriString.toUri()
             val dir = DocumentFile.fromTreeUri(applicationContext, treeUri)
                 ?: throw IOException("Cannot open destination folder")
+            if (!dir.canWrite()) {
+                throw IOException("No write permission for destination folder — re-select it in Settings → Folder Mapping")
+            }
 
             // Delete existing file if present (resumable would be nicer, but
             // SAF doesn't support partial writes; simplicity wins here)
@@ -129,11 +159,29 @@ class DownloadWorker @AssistedInject constructor(
                         if (downloaded - lastNotified > 512 * 1024) {
                             lastNotified = downloaded
                             setProgress(workDataOf(PROGRESS_BYTES to downloaded, PROGRESS_TOTAL to total))
-                            setForeground(buildForegroundInfo(fileName, downloaded, total))
+                            notifyProgress(fileName, downloaded, total)
                         }
                     }
                 }
+                out.flush()
+                setProgress(workDataOf(PROGRESS_BYTES to downloaded, PROGRESS_TOTAL to total))
             } ?: throw IOException("Cannot open output stream")
+        }
+    }
+
+    /**
+     * Promote to a foreground service so the OS doesn't kill a long download.
+     *
+     * This is best-effort: the platform refuses to start a foreground service
+     * while the app is backgrounded on Android 12+, and the notification is
+     * silently dropped when POST_NOTIFICATIONS is denied on Android 13+. Neither
+     * is a reason to abandon the transfer, so failures here are logged, not thrown.
+     */
+    private suspend fun notifyProgress(fileName: String, downloaded: Long, total: Long) {
+        try {
+            setForeground(buildForegroundInfo(fileName, downloaded, total))
+        } catch (e: Exception) {
+            Log.w(TAG, "Could not run download as a foreground service: ${e.message}")
         }
     }
 
@@ -151,7 +199,14 @@ class DownloadWorker @AssistedInject constructor(
             .setOngoing(true)
             .setSilent(true)
             .build()
-        return ForegroundInfo(id.hashCode(), notification)
+
+        // Android 10+ requires the service type to be passed through, and on
+        // Android 14+ omitting it throws MissingForegroundServiceTypeException.
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            ForegroundInfo(id.hashCode(), notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
+        } else {
+            ForegroundInfo(id.hashCode(), notification)
+        }
     }
 
     private fun createNotificationChannel() {

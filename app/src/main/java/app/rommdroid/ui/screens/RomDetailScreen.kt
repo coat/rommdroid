@@ -58,6 +58,24 @@ class RomDetailViewModel @Inject constructor(
     private val _platformFolder = MutableStateFlow<PlatformFolderEntity?>(null)
     val platformFolder: StateFlow<PlatformFolderEntity?> = _platformFolder.asStateFlow()
 
+    /** Live state of every download enqueued for this ROM, keyed by file id. */
+    val downloads: StateFlow<Map<Int, WorkInfo>> =
+        workManager.getWorkInfosByTagFlow("rom_$romId")
+            .map { infos ->
+                infos.mapNotNull { info ->
+                    val fileId = info.tags
+                        .firstOrNull { it.startsWith(TAG_FILE_PREFIX) }
+                        ?.removePrefix(TAG_FILE_PREFIX)
+                        ?.toIntOrNull()
+                        ?: return@mapNotNull null
+                    fileId to info
+                }.toMap()
+            }
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyMap())
+
+    private val _messages = MutableSharedFlow<String>(extraBufferCapacity = 4)
+    val messages: SharedFlow<String> = _messages.asSharedFlow()
+
     init {
         viewModelScope.launch {
             try {
@@ -90,7 +108,15 @@ class RomDetailViewModel @Inject constructor(
         // For synthetic single-file ROMs (id=0), don't pass file_ids — the API
         // will serve the primary file by name without needing an ID filter.
         val fileIds = if (file.id == 0) emptyList() else listOf(file.id)
-        val url = repo.romDownloadUrl(serverUrl, rom.id, file.fileName, fileIds)
+        val url = try {
+            repo.romDownloadUrl(serverUrl, rom.id, file.fileName, fileIds)
+        } catch (e: IllegalArgumentException) {
+            // A stored server URL missing its scheme would otherwise throw on
+            // the main thread and take the app down on tap.
+            android.util.Log.e("RomDetail", "Bad server URL: $serverUrl", e)
+            _messages.tryEmit("Invalid server URL — reconnect in Settings")
+            return true
+        }
 
         val inputData = DownloadWorker.buildRequest(
             url            = url,
@@ -108,6 +134,7 @@ class RomDetailViewModel @Inject constructor(
                     .build()
             )
             .addTag("rom_${rom.id}")
+            .addTag("$TAG_FILE_PREFIX${file.id}")
             .build()
 
         workManager.enqueueUniqueWork(
@@ -115,7 +142,12 @@ class RomDetailViewModel @Inject constructor(
             ExistingWorkPolicy.KEEP,
             request,
         )
+        _messages.tryEmit("Queued ${file.fileName}")
         return true
+    }
+
+    private companion object {
+        const val TAG_FILE_PREFIX = "file_"
     }
 }
 
@@ -130,10 +162,17 @@ fun RomDetailScreen(
 ) {
     val state          by viewModel.state.collectAsState()
     val platformFolder by viewModel.platformFolder.collectAsState()
+    val downloads      by viewModel.downloads.collectAsState()
 
     var showNoFolderDialog by remember { mutableStateOf(false) }
+    val snackbarHostState = remember { SnackbarHostState() }
+
+    LaunchedEffect(Unit) {
+        viewModel.messages.collect { snackbarHostState.showSnackbar(it) }
+    }
 
     Scaffold(
+        snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
             TopAppBar(
                 title = {
@@ -245,6 +284,7 @@ fun RomDetailScreen(
                         RomFileRow(
                             file        = file,
                             canDownload = platformFolder != null,
+                            workInfo    = downloads[file.id],
                             onDownload  = {
                                 val ok = viewModel.downloadFile(file)
                                 if (!ok) showNoFolderDialog = true
@@ -265,6 +305,7 @@ fun RomDetailScreen(
                             RomFileRow(
                                 file        = syntheticFile,
                                 canDownload = platformFolder != null,
+                                workInfo    = downloads[syntheticFile.id],
                                 onDownload  = {
                                     val ok = viewModel.downloadFile(syntheticFile)
                                     if (!ok) showNoFolderDialog = true
@@ -293,20 +334,59 @@ fun RomDetailScreen(
 private fun RomFileRow(
     file: RomFileSchema,
     canDownload: Boolean,
+    workInfo: WorkInfo?,
     onDownload: () -> Unit,
 ) {
-    ListItem(
-        headlineContent   = { Text(file.fileName) },
-        supportingContent = { Text(file.fileSizeBytes.formatSize()) },
-        trailingContent   = {
-            IconButton(onClick = onDownload) {
-                Icon(
-                    imageVector        = Icons.Default.Download,
-                    contentDescription = "Download ${file.fileName}",
-                    tint = if (canDownload) MaterialTheme.colorScheme.primary
-                           else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f),
+    val downloaded = workInfo?.progress?.getLong(DownloadWorker.PROGRESS_BYTES, 0L) ?: 0L
+    val total      = workInfo?.progress?.getLong(DownloadWorker.PROGRESS_TOTAL, 0L) ?: 0L
+
+    Column {
+        ListItem(
+            headlineContent   = { Text(file.fileName) },
+            supportingContent = {
+                // Surface what the download is actually doing. Previously a tap
+                // produced no visible change whether it worked or not.
+                when (workInfo?.state) {
+                    WorkInfo.State.ENQUEUED -> Text("Waiting for network…")
+                    WorkInfo.State.RUNNING  -> Text(
+                        if (total > 0) "${downloaded.formatSize()} / ${total.formatSize()}"
+                        else "Downloading…"
+                    )
+                    WorkInfo.State.SUCCEEDED -> Text("Downloaded · ${file.fileSizeBytes.formatSize()}")
+                    WorkInfo.State.FAILED -> Text(
+                        workInfo.outputData.getString(DownloadWorker.KEY_ERROR)
+                            ?: "Download failed",
+                        color = MaterialTheme.colorScheme.error,
+                    )
+                    WorkInfo.State.CANCELLED -> Text("Cancelled")
+                    else -> Text(file.fileSizeBytes.formatSize())
+                }
+            },
+            trailingContent   = {
+                IconButton(
+                    onClick = onDownload,
+                    enabled = canDownload && workInfo?.state?.isFinished != false,
+                ) {
+                    Icon(
+                        imageVector        = Icons.Default.Download,
+                        contentDescription = "Download ${file.fileName}",
+                        tint = if (canDownload) MaterialTheme.colorScheme.primary
+                               else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f),
+                    )
+                }
+            },
+        )
+        if (workInfo?.state == WorkInfo.State.RUNNING) {
+            if (total > 0) {
+                LinearProgressIndicator(
+                    progress = { downloaded.toFloat() / total.toFloat() },
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+                )
+            } else {
+                LinearProgressIndicator(
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
                 )
             }
-        },
-    )
+        }
+    }
 }

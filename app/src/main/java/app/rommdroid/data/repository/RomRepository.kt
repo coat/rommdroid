@@ -8,6 +8,7 @@ import app.rommdroid.data.db.*
 import kotlinx.coroutines.flow.Flow
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
+import okhttp3.HttpUrl.Companion.toHttpUrl
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -81,9 +82,16 @@ class RomRepository @Inject constructor(
         fileName: String,
         fileIds: List<Int> = emptyList(),
     ): String {
-        val base = "${serverUrl.trimEnd('/')}/api/roms/$romId/content/$fileName"
-        return if (fileIds.isEmpty()) base
-        else "$base?file_ids=${fileIds.joinToString(",")}"
+        // Built through HttpUrl so ROM names survive the trip: spaces, "&",
+        // "#" and "?" are common in filenames and a raw string concat produces
+        // a URL that silently points at the wrong resource.
+        val builder = serverUrl.trimEnd('/').toHttpUrl().newBuilder()
+            .addPathSegments("api/roms/$romId/content")
+            .addPathSegment(fileName)
+        if (fileIds.isNotEmpty()) {
+            builder.addQueryParameter("file_ids", fileIds.joinToString(","))
+        }
+        return builder.build().toString()
     }
 
     // ── Mappers ───────────────────────────────────────────────────────────────

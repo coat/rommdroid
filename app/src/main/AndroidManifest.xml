@@ -38,6 +38,15 @@
             </intent-filter>
         </activity>
 
+        <!-- WorkManager's foreground service must declare a type on Android 14+
+             (targetSdk >= 34) or startForeground() throws
+             MissingForegroundServiceTypeException and every download dies. The
+             library's own manifest entry declares no type, so override it here. -->
+        <service
+            android:name="androidx.work.impl.foreground.SystemForegroundService"
+            android:foregroundServiceType="dataSync"
+            tools:node="merge" />
+
         <!-- WorkManager initializer via Hilt -->
         <provider
             android:name="androidx.startup.InitializationProvider"
