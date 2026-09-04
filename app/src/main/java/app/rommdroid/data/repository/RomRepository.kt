@@ -5,6 +5,7 @@ import app.rommdroid.data.api.model.DetailedRomSchema
 import app.rommdroid.data.api.model.PlatformSchema
 import app.rommdroid.data.api.model.SimpleRomSchema
 import app.rommdroid.data.db.*
+import app.rommdroid.util.decodeHtmlEntities
 import kotlinx.coroutines.flow.Flow
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
@@ -63,7 +64,12 @@ class RomRepository @Inject constructor(
         } while (offset < page.total)
     }
 
-    suspend fun getRomDetail(id: Int): DetailedRomSchema = api.getRom(id)
+    suspend fun getRomDetail(id: Int): DetailedRomSchema = api.getRom(id).run {
+        copy(
+            name    = name?.decodeHtmlEntities(),
+            summary = summary?.decodeHtmlEntities(),
+        )
+    }
 
     suspend fun searchLocal(query: String): List<RomEntity> = romDao.search(query)
 
@@ -115,9 +121,11 @@ class RomRepository @Inject constructor(
         fsNameNoTags          = fsNameNoTags,
         fsExtension           = fsExtension,
         fsSizeBytes           = fsSizeBytes,
-        name                  = name,
+        // Scraped copy arrives HTML-escaped; filesystem fields never get this
+        // treatment — a literal "&amp;" there is part of the real filename.
+        name                  = name?.decodeHtmlEntities(),
         slug                  = slug,
-        summary               = summary,
+        summary               = summary?.decodeHtmlEntities(),
         regions               = json.encodeToString(regions),
         languages             = json.encodeToString(languages),
         tags                  = json.encodeToString(tags),
