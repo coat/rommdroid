@@ -3,9 +3,7 @@ package app.rommdroid.ui.screens
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -25,11 +23,17 @@ import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
+import app.rommdroid.data.db.BaseFolderDao
+import app.rommdroid.data.db.BaseFolderEntity
 import app.rommdroid.data.db.PlatformEntity
 import app.rommdroid.data.db.PlatformFolderDao
 import app.rommdroid.data.db.PlatformFolderEntity
+import app.rommdroid.data.db.PlatformSubfolderDao
+import app.rommdroid.data.db.PlatformSubfolderEntity
 import app.rommdroid.data.db.RomEntity
 import app.rommdroid.data.repository.CredentialRepository
+import app.rommdroid.data.repository.DownloadTarget
+import app.rommdroid.data.repository.DownloadTargetRepository
 import app.rommdroid.data.repository.RomRepository
 import app.rommdroid.util.formatSize
 import javax.inject.Inject
@@ -187,7 +191,7 @@ fun SettingsScreen(
                 ListItem(
                     modifier          = Modifier.clickable(onClick = onFolderMapping),
                     headlineContent   = { Text("Folder Mapping") },
-                    supportingContent = { Text("Configure per-platform download folders") },
+                    supportingContent = { Text("Set your ROMs folder and per-platform overrides") },
                     leadingContent    = { Icon(Icons.Default.FolderOpen, null) },
                     trailingContent   = { Icon(Icons.AutoMirrored.Filled.ArrowForward, null) },
                 )
@@ -252,35 +256,74 @@ fun SettingsScreen(
 // Folder Mapping
 // ─────────────────────────────────────────────────────────────────────────────
 
+/** One row of the folder-mapping list: a platform plus where its ROMs land. */
+data class PlatformFolderRow(
+    val platform: PlatformEntity,
+    val target: DownloadTarget?,
+    /** The ES-DE name, shown when the user has renamed the subfolder. */
+    val defaultSubfolder: String,
+    val isRenamed: Boolean,
+)
+
 @HiltViewModel
 class FolderMappingViewModel @Inject constructor(
     private val repo: RomRepository,
     private val folderDao: PlatformFolderDao,
+    private val baseFolderDao: BaseFolderDao,
+    private val subfolderDao: PlatformSubfolderDao,
+    private val targets: DownloadTargetRepository,
 ) : ViewModel() {
 
-    val platforms: StateFlow<List<PlatformEntity>> =
-        repo.observePlatforms()
-            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
-
-    val folders: StateFlow<List<PlatformFolderEntity>> =
-        folderDao.observeAll()
-            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+    val baseFolder: StateFlow<BaseFolderEntity?> =
+        baseFolderDao.observe()
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
 
     /**
-     * Persists the SAF tree URI grant and saves the mapping.
-     *
-     * [uri]         — the content:// tree URI returned by ACTION_OPEN_DOCUMENT_TREE
-     * [displayPath] — human-readable path derived from the URI (see [safDisplayPath])
+     * Every platform with its resolved destination. Combining the three sources
+     * here keeps the resolution rules in one place rather than duplicated
+     * between the download path and the settings UI.
      */
-    fun saveFolder(platformId: Int, uri: String, displayPath: String) {
+    val rows: StateFlow<List<PlatformFolderRow>> = combine(
+        repo.observePlatforms(),
+        baseFolderDao.observe(),
+        folderDao.observeAll(),
+        subfolderDao.observeAll(),
+    ) { platforms, base, overrides, subfolders ->
+        val overrideMap = overrides.associateBy { it.platformId }
+        val subMap      = subfolders.associateBy { it.platformId }
+        platforms.map { platform ->
+            val custom = subMap[platform.id]?.name
+            PlatformFolderRow(
+                platform         = platform,
+                target           = targets.resolve(platform, base, overrideMap[platform.id], custom),
+                defaultSubfolder = targets.defaultSubfolder(platform),
+                isRenamed        = custom != null,
+            )
+        }
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    fun setBaseFolder(uri: String, displayPath: String) {
+        viewModelScope.launch { targets.setBaseFolder(uri, displayPath) }
+    }
+
+    /** Point a single platform at a directory outside the base folder. */
+    fun setPlatformFolder(platformId: Int, uri: String, displayPath: String) {
         viewModelScope.launch {
             folderDao.upsert(PlatformFolderEntity(platformId, uri, displayPath))
         }
     }
 
-    fun removeFolder(platformId: Int) {
+    fun renameSubfolder(platformId: Int, name: String) {
+        viewModelScope.launch {
+            subfolderDao.upsert(PlatformSubfolderEntity(platformId, name.trim().trim('/')))
+        }
+    }
+
+    /** Drop both kinds of override so the platform follows the ES-DE default again. */
+    fun resetPlatform(platformId: Int) {
         viewModelScope.launch {
             folderDao.deleteForPlatform(platformId)
+            subfolderDao.deleteForPlatform(platformId)
         }
     }
 }
@@ -307,46 +350,45 @@ fun safDisplayPath(uri: Uri): String {
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun FolderMappingScreen(
     viewModel: FolderMappingViewModel,
     onBack: () -> Unit,
 ) {
-    val context   = LocalContext.current
-    val platforms by viewModel.platforms.collectAsState()
-    val folders   by viewModel.folders.collectAsState()
+    val context    = LocalContext.current
+    val rows       by viewModel.rows.collectAsState()
+    val baseFolder by viewModel.baseFolder.collectAsState()
 
-    val folderMap = folders.associateBy { it.platformId }
-
-    // Which platform ID the next picker result belongs to.
-    // Stored in a mutable ref so the launcher callback always reads the latest value.
+    // Which platform an override picker result belongs to; -1 means the picker
+    // was launched for the base folder itself.
     val pendingPlatformId = remember { mutableIntStateOf(-1) }
+    var editing by remember { mutableStateOf<PlatformFolderRow?>(null) }
 
-    // SAF folder picker launcher.
-    // On success: take persistent read+write permission on the URI, then save.
-    val folderPickerLauncher = rememberLauncherForActivityResult(
+    fun persist(uri: Uri) = context.contentResolver.takePersistableUriPermission(
+        uri,
+        android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION or
+            android.content.Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+    )
+
+    val basePicker = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocumentTree()
+    ) { uri: Uri? ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        persist(uri)
+        viewModel.setBaseFolder(uri.toString(), safDisplayPath(uri))
+    }
+
+    val overridePicker = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocumentTree()
     ) { uri: Uri? ->
         if (uri == null) return@rememberLauncherForActivityResult
         val platformId = pendingPlatformId.intValue
         if (platformId == -1) return@rememberLauncherForActivityResult
-
-        // Take persistent URI permissions so we can write here across reboots.
-        // Without this the grant is revoked on the next reboot.
-        context.contentResolver.takePersistableUriPermission(
-            uri,
-            android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION or
-                android.content.Intent.FLAG_GRANT_WRITE_URI_PERMISSION
-        )
-
-        val displayPath = safDisplayPath(uri)
-        viewModel.saveFolder(platformId, uri.toString(), displayPath)
+        persist(uri)
+        viewModel.setPlatformFolder(platformId, uri.toString(), safDisplayPath(uri))
         pendingPlatformId.intValue = -1
     }
-
-    // Long-press / confirm dialog for folder removal
-    var removePlatform by remember { mutableStateOf<PlatformEntity?>(null) }
 
     Scaffold(
         topBar = {
@@ -360,97 +402,176 @@ fun FolderMappingScreen(
             )
         }
     ) { padding ->
-        Column(Modifier.fillMaxSize().padding(padding)) {
-            // Explanatory banner
-            Card(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 8.dp),
-                colors = CardDefaults.cardColors(
-                    containerColor = MaterialTheme.colorScheme.surfaceVariant
-                ),
-            ) {
+        LazyColumn(Modifier.fillMaxSize().padding(padding)) {
+
+            // ── Base folder ──────────────────────────────────────────────────
+            item {
+                Card(
+                    modifier = Modifier.fillMaxWidth().padding(16.dp),
+                    colors = CardDefaults.cardColors(
+                        containerColor = if (baseFolder == null)
+                            MaterialTheme.colorScheme.errorContainer
+                        else MaterialTheme.colorScheme.surfaceVariant
+                    ),
+                ) {
+                    Column(Modifier.padding(16.dp)) {
+                        Text("ROMs folder", style = MaterialTheme.typography.titleMedium)
+                        Spacer(Modifier.height(4.dp))
+                        Text(
+                            baseFolder?.displayPath
+                                ?: "Not set — choose the folder that holds your platform subfolders.",
+                            style = MaterialTheme.typography.bodyMedium,
+                        )
+                        Spacer(Modifier.height(4.dp))
+                        Text(
+                            "Each platform gets a subfolder here, named to the ES-DE " +
+                                "convention. One permission covers them all.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        Spacer(Modifier.height(12.dp))
+                        Button(onClick = { basePicker.launch(baseFolder?.folderUri?.let(Uri::parse)) }) {
+                            Icon(Icons.Default.FolderOpen, contentDescription = null)
+                            Spacer(Modifier.width(8.dp))
+                            Text(if (baseFolder == null) "Choose ROMs folder" else "Change")
+                        }
+                    }
+                }
+            }
+
+            item {
                 Text(
-                    text = "Tap a platform to choose where its ROMs are saved. " +
-                           "Long-press to remove a mapping.",
-                    style    = MaterialTheme.typography.bodySmall,
-                    modifier = Modifier.padding(12.dp),
+                    "Platforms",
+                    style    = MaterialTheme.typography.titleMedium,
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
                 )
             }
 
-            LazyColumn {
-                items(platforms, key = { it.id }) { platform ->
-                    val mapped = folderMap[platform.id]
-                    ListItem(
-                        modifier = Modifier.combinedClickable(
-                            onClick = {
-                                pendingPlatformId.intValue = platform.id
-                                // Pass the existing URI as an initial location hint (Android 8+)
-                                folderPickerLauncher.launch(
-                                    mapped?.folderUri?.let { Uri.parse(it) }
-                                )
-                            },
-                            onLongClick = if (mapped != null) ({
-                                removePlatform = platform
-                            }) else null,
-                        ),
-                        headlineContent   = { Text(platform.displayName) },
-                        supportingContent = {
-                            Text(
-                                mapped?.displayPath ?: "Tap to set download folder",
-                                color = if (mapped != null)
-                                    MaterialTheme.colorScheme.onSurface
-                                else
-                                    MaterialTheme.colorScheme.onSurfaceVariant,
+            items(rows, key = { it.platform.id }) { row ->
+                val target = row.target
+                ListItem(
+                    modifier = Modifier.clickable { editing = row },
+                    headlineContent   = { Text(row.platform.displayName) },
+                    supportingContent = {
+                        Text(
+                            target?.displayPath ?: "Set a ROMs folder first",
+                            color = if (target == null) MaterialTheme.colorScheme.onSurfaceVariant
+                                    else MaterialTheme.colorScheme.onSurface,
+                        )
+                    },
+                    leadingContent = {
+                        Icon(
+                            imageVector = if (target != null) Icons.Default.FolderOpen
+                                          else Icons.Default.Folder,
+                            contentDescription = null,
+                            tint = if (target != null) MaterialTheme.colorScheme.primary
+                                   else MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    },
+                    trailingContent = {
+                        when {
+                            target?.isOverride == true -> AssistChip(
+                                onClick = { editing = row },
+                                label   = { Text("Custom") },
                             )
-                        },
-                        leadingContent = {
-                            Icon(
-                                imageVector = if (mapped != null) Icons.Default.FolderOpen
-                                              else Icons.Default.Folder,
-                                contentDescription = null,
-                                tint = if (mapped != null) MaterialTheme.colorScheme.primary
-                                       else MaterialTheme.colorScheme.onSurfaceVariant,
+                            row.isRenamed -> AssistChip(
+                                onClick = { editing = row },
+                                label   = { Text("Renamed") },
                             )
-                        },
-                        trailingContent = {
-                            if (mapped != null) {
-                                Icon(
-                                    Icons.Default.Check,
-                                    contentDescription = "Folder set",
-                                    tint = MaterialTheme.colorScheme.primary,
-                                )
-                            }
-                        },
-                    )
-                    HorizontalDivider()
-                }
+                            else -> null
+                        }
+                    },
+                )
+                HorizontalDivider()
             }
         }
     }
 
-    // Confirm removal dialog
-    removePlatform?.let { platform ->
-        AlertDialog(
-            onDismissRequest = { removePlatform = null },
-            title   = { Text("Remove folder mapping?") },
-            text    = {
-                Text(
-                    "The folder mapping for ${platform.displayName} will be removed. " +
-                    "Files already downloaded are not affected."
-                )
+    editing?.let { row ->
+        PlatformFolderDialog(
+            row       = row,
+            onDismiss = { editing = null },
+            onRename  = { name ->
+                viewModel.renameSubfolder(row.platform.id, name)
+                editing = null
             },
-            confirmButton = {
-                TextButton(
-                    onClick = {
-                        viewModel.removeFolder(platform.id)
-                        removePlatform = null
-                    }
-                ) { Text("Remove") }
+            onPickFolder = {
+                pendingPlatformId.intValue = row.platform.id
+                overridePicker.launch(row.target?.treeUri?.let(Uri::parse))
+                editing = null
             },
-            dismissButton = {
-                TextButton(onClick = { removePlatform = null }) { Text("Cancel") }
+            onReset = {
+                viewModel.resetPlatform(row.platform.id)
+                editing = null
             },
         )
     }
+}
+
+/**
+ * Per-platform override sheet: rename the subfolder (the common case for a
+ * different naming scheme) or point the platform at an unrelated directory.
+ */
+@Composable
+private fun PlatformFolderDialog(
+    row: PlatformFolderRow,
+    onDismiss: () -> Unit,
+    onRename: (String) -> Unit,
+    onPickFolder: () -> Unit,
+    onReset: () -> Unit,
+) {
+    var name by remember(row.platform.id) {
+        mutableStateOf(row.target?.subfolder ?: row.defaultSubfolder)
+    }
+    val isCustomFolder = row.target?.isOverride == true
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(row.platform.displayName) },
+        text = {
+            Column {
+                if (isCustomFolder) {
+                    Text(
+                        "This platform downloads to its own folder:\n${row.target?.displayPath}",
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                } else {
+                    Text("Subfolder name", style = MaterialTheme.typography.labelLarge)
+                    Spacer(Modifier.height(8.dp))
+                    OutlinedTextField(
+                        value         = name,
+                        onValueChange = { name = it },
+                        singleLine    = true,
+                        supportingText = {
+                            Text(
+                                if (name.trim() == row.defaultSubfolder)
+                                    "ES-DE default"
+                                else
+                                    "ES-DE default is \"${row.defaultSubfolder}\"",
+                            )
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
+                Spacer(Modifier.height(16.dp))
+                TextButton(onClick = onPickFolder, modifier = Modifier.fillMaxWidth()) {
+                    Icon(Icons.Default.FolderOpen, contentDescription = null)
+                    Spacer(Modifier.width(8.dp))
+                    Text("Use a different folder…")
+                }
+                if (isCustomFolder || row.isRenamed) {
+                    TextButton(onClick = onReset, modifier = Modifier.fillMaxWidth()) {
+                        Text("Reset to ES-DE default")
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = { onRename(name) },
+                enabled = !isCustomFolder && name.isNotBlank(),
+            ) { Text("Save") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
+    )
 }
