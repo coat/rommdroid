@@ -39,11 +39,36 @@ gh secret set RELEASE_KEY_PASSWORD
 
 ## What the workflow does
 
-- **Push to `main`** — builds a signed release APK and attaches it to the
-  workflow run as an artifact, kept for 90 days.
-- **Push a `v*` tag** — same build, plus a GitHub Release with the APK attached
-  and auto-generated notes.
+- **Push to `main`** — builds a signed release APK, attaches it to the workflow
+  run as an artifact (90 days), and refreshes the `main-latest` prerelease so
+  the newest main build always has a stable download URL.
+- **Push a `v*` tag, or publish a Release in the web UI** — same build, plus a
+  GitHub Release with the APK attached and auto-generated notes.
 - **Manual run** — the `Run workflow` button, same as a push to `main`.
+
+Both publish paths are idempotent: they create the release only if it isn't
+there yet and upload the APK with `--clobber`. That's what makes publishing
+from the web UI work — the release already exists by the time the build
+finishes, and a plain `gh release create` would fail on it.
+
+## Installing on a device
+
+Download APKs from a **release page**, not from a run's Artifacts section.
+GitHub always zips artifacts — there's no opt-out — so an artifact download
+lands as a `.zip` a phone can't install without unpacking it first. Release
+assets download byte-for-byte, so tapping the `.apk` on the release page
+installs it directly.
+
+| Build | Where to get it |
+| --- | --- |
+| Newest `main` | Releases → **Latest main build** (`main-latest`), refreshed each merge |
+| A version | Releases → the `v*` tag |
+| A PR branch | Run Artifacts, zipped — unpack on a computer, or `adb install` |
+
+`main-latest` is marked as a prerelease with `--latest=false`, so it never
+displaces a real tagged version as the repo's "Latest release". Its tag is
+force-moved to each new `main` commit; it doesn't match the `v*` trigger
+filter, so moving it can't re-enter the workflow.
 
 Every path runs `testDebugUnitTest` first and stops if it fails, so a tag can't
 cut a Release from code whose tests are broken. The step sits ahead of the
