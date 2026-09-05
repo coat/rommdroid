@@ -9,6 +9,12 @@ plugins {
     alias(libs.plugins.ksp)
 }
 
+// Every CI build gets a distinct versionCode so APKs are distinguishable and
+// installable over one another. Locally there's no run number, so it stays 1.
+val buildNumber = (System.getenv("BUILD_NUMBER")
+    ?: providers.gradleProperty("buildNumber").orNull)
+    ?.toIntOrNull() ?: 1
+
 android {
     namespace   = "app.rommdroid"
     compileSdk  = 35
@@ -18,7 +24,7 @@ android {
         applicationId   = "app.rommdroid"
         minSdk          = 29          // Android 10 — clean SAF, scoped storage
         targetSdk       = 35
-        versionCode     = 1
+        versionCode     = buildNumber
         versionName     = "0.1.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
