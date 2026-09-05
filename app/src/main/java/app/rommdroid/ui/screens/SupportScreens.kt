@@ -1,6 +1,7 @@
 package app.rommdroid.ui.screens
 
 import android.net.Uri
+import android.view.inputmethod.EditorInfo
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.ExperimentalFoundationApi
@@ -45,6 +46,7 @@ import app.rommdroid.data.repository.CredentialRepository
 import app.rommdroid.data.repository.DownloadTarget
 import app.rommdroid.data.repository.DownloadTargetRepository
 import app.rommdroid.data.repository.RomRepository
+import app.rommdroid.ui.components.OutlinedInputField
 import app.rommdroid.util.RomGroup
 import app.rommdroid.util.formatSize
 import app.rommdroid.util.groupRoms
@@ -158,11 +160,11 @@ fun SearchScreen(
         topBar = {
             TopAppBar(
                 title = {
-                    OutlinedTextField(
+                    OutlinedInputField(
                         value         = query,
                         onValueChange = { viewModel.query.value = it },
-                        placeholder   = { Text("Search ROMs…") },
-                        singleLine    = true,
+                        placeholder   = "Search ROMs…",
+                        imeAction     = EditorInfo.IME_ACTION_SEARCH,
                         modifier      = Modifier.fillMaxWidth(),
                     )
                 },
@@ -815,10 +817,11 @@ private fun PlatformFolderDialog(
                 } else {
                     Text("Subfolder name", style = MaterialTheme.typography.labelLarge)
                     Spacer(Modifier.height(8.dp))
-                    OutlinedTextField(
+                    OutlinedInputField(
                         value         = name,
                         onValueChange = { name = it },
-                        singleLine    = true,
+                        imeLabel      = "Subfolder name",
+                        imeAction     = EditorInfo.IME_ACTION_DONE,
                         supportingText = {
                             Text(
                                 if (name.trim() == row.defaultSubfolder)
