@@ -257,6 +257,7 @@ private fun SimpleRomSchema.toVariant(): RomVariant {
 fun RomDetailScreen(
     viewModel: RomDetailViewModel,
     romId: Int,
+    onFolderSettings: () -> Unit,
     onBack: () -> Unit,
 ) {
     val state          by viewModel.state.collectAsState()
@@ -271,12 +272,20 @@ fun RomDetailScreen(
 
     LaunchedEffect(Unit) {
         viewModel.messages.collect { message ->
+            val action = when {
+                message.undoIds.isNotEmpty() -> "Undo"
+                message.needsFolder          -> "Set folder"
+                else                         -> null
+            }
             val result = snackbarHostState.showSnackbar(
                 message     = message.text,
-                actionLabel = if (message.undoIds.isNotEmpty()) "Undo" else null,
+                actionLabel = action,
                 duration    = SnackbarDuration.Short,
             )
-            if (result == SnackbarResult.ActionPerformed) viewModel.undo(message.undoIds)
+            if (result == SnackbarResult.ActionPerformed) {
+                if (message.undoIds.isNotEmpty()) viewModel.undo(message.undoIds)
+                else if (message.needsFolder) onFolderSettings()
+            }
         }
     }
 
@@ -352,23 +361,34 @@ fun RomDetailScreen(
                         // Folder status / warning
                         item {
                             if (target == null) {
+                                // The warning is also the way out of it: nothing
+                                // on this screen works until a folder is chosen,
+                                // so the card itself goes straight there.
                                 Card(
+                                    onClick  = onFolderSettings,
                                     colors   = CardDefaults.cardColors(
-                                        containerColor = MaterialTheme.colorScheme.errorContainer
+                                        containerColor = MaterialTheme.colorScheme.errorContainer,
+                                        contentColor   = MaterialTheme.colorScheme.onErrorContainer,
                                     ),
                                     modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
                                 ) {
-                                    Row(
-                                        Modifier.padding(12.dp),
-                                        verticalAlignment = Alignment.CenterVertically,
-                                    ) {
-                                        Icon(Icons.Default.FolderOpen, contentDescription = null)
-                                        Spacer(Modifier.width(8.dp))
-                                        Text(
-                                            "No ROMs folder set. Go to Settings → Folder Mapping " +
-                                                "and choose your ROMs directory.",
-                                            style = MaterialTheme.typography.bodySmall,
-                                        )
+                                    Column(Modifier.padding(12.dp)) {
+                                        Row(verticalAlignment = Alignment.CenterVertically) {
+                                            Icon(Icons.Default.FolderOpen, contentDescription = null)
+                                            Spacer(Modifier.width(8.dp))
+                                            Text(
+                                                "No ROMs folder set. Downloads stay disabled " +
+                                                    "until you choose one.",
+                                                style = MaterialTheme.typography.bodySmall,
+                                            )
+                                        }
+                                        TextButton(
+                                            onClick  = onFolderSettings,
+                                            colors   = ButtonDefaults.textButtonColors(
+                                                contentColor = MaterialTheme.colorScheme.onErrorContainer
+                                            ),
+                                            modifier = Modifier.align(Alignment.End),
+                                        ) { Text("Set ROMs folder") }
                                     }
                                 }
                                 Spacer(Modifier.height(8.dp))
