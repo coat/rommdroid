@@ -92,8 +92,9 @@ private class LabelledEditText(context: Context) : EditText(context) {
 }
 
 /**
- * Handle for moving focus between fields — pass one to [OutlinedInputField] and
- * call [requestFocus] from the previous field's `onImeAction`.
+ * Handle for driving a field from outside — pass one to [OutlinedInputField] and
+ * call [requestFocus] from the previous field's `onImeAction` to walk a form, or
+ * [hideKeyboard] to put the keyboard away when the action ends the editing.
  */
 @Stable
 class InputFieldHandle {
@@ -105,6 +106,18 @@ class InputFieldHandle {
         val imm = target.context
             .getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager
         imm.showSoftInput(target, 0)
+    }
+
+    /**
+     * Close the keyboard, leaving the field focused so typing can resume with a
+     * tap.  TextView does this itself for [EditorInfo.IME_ACTION_DONE] but for
+     * no other action, so a Search or Go field has to ask.
+     */
+    fun hideKeyboard() {
+        val target = view ?: return
+        val imm = target.context
+            .getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager
+        imm.hideSoftInputFromWindow(target.windowToken, 0)
     }
 }
 
