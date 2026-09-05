@@ -1,0 +1,37 @@
+<!-- RomMDroid master logo.
+     Single source of truth for every icon asset in the app.
+     Edit this, then run design/logo/generate-icons.py to regenerate
+     the adaptive-icon vector drawables and the mipmap PNGs.
+
+     data-role attributes are read by the generator:
+       bg     full-canvas backdrop -> adaptive icon background layer
+       body   cartridge shell      -> monochrome silhouette
+       label  label window
+       arrow  download arrow       -> knocked out of the monochrome layer
+       pins   edge connector       -> knocked out of the monochrome layer -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512"
+     role="img" aria-label="RomMDroid">
+  <defs>
+    <linearGradient id="backdrop" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#8B5CF6"/>
+      <stop offset="1" stop-color="#4C1D95"/>
+    </linearGradient>
+  </defs>
+
+  <rect data-role="bg" width="512" height="512" rx="114" fill="url(#backdrop)"/>
+
+  <!-- cartridge shell -->
+  <rect data-role="body" x="100" y="120" width="312" height="272" rx="26" fill="#FFFFFF"/>
+  <!-- label window -->
+  <rect data-role="label" x="136" y="152" width="240" height="140" rx="14" fill="#4C1D95"/>
+  <!-- download arrow -->
+  <path data-role="arrow" d="M240 174 H272 V216 H306 L256 266 L206 216 H240 Z" fill="#FFFFFF"/>
+  <!-- edge connector pins -->
+  <g data-role="pins" fill="#C4B5FD">
+    <rect x="136" y="322" width="32" height="50" rx="9"/>
+    <rect x="188" y="322" width="32" height="50" rx="9"/>
+    <rect x="240" y="322" width="32" height="50" rx="9"/>
+    <rect x="292" y="322" width="32" height="50" rx="9"/>
+    <rect x="344" y="322" width="32" height="50" rx="9"/>
+  </g>
+</svg>

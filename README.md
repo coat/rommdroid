@@ -76,6 +76,21 @@ app/src/main/java/app/rommdroid/
 
 The display name is intentionally separated from build identifiers so it's easy to change.
 
+### App icon
+
+`design/logo/rommdroid-icon.svg` is the master asset — a ROM cartridge with a download arrow.
+Everything else is generated from it:
+
+```bash
+python3 design/logo/generate-icons.py
+```
+
+That writes the adaptive-icon layers (`drawable/ic_launcher_{background,foreground,monochrome}.xml`),
+the `mipmap-anydpi-v26` descriptors, the legacy PNGs at all five densities, and a 512 px
+Play Store icon. The master's 512-unit canvas is mapped onto the adaptive icon's 72 dp safe zone,
+so the art survives every launcher mask. Needs `resvg` for the PNGs (in the dev shell); the vector
+drawables generate without it.
+
 ## API
 
 RomMDroid uses the RomM REST API (`/api/*`). The live OpenAPI spec is at
