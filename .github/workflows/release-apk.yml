@@ -52,6 +52,23 @@ jobs:
             exit 1
           fi
 
+      # Gates everything below, so a tag or a direct push to main can't cut a
+      # release from code whose tests fail. Merges from PRs have already run
+      # this, but tag builds and direct pushes would otherwise skip it.
+      # Deliberately ahead of the keystore decode: no reason to put the signing
+      # key on disk for a build that is about to fail.
+      - name: Run unit tests
+        run: ./gradlew --no-daemon testDebugUnitTest
+
+      - name: Upload test report
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: unit-test-report
+          path: app/build/reports/tests/testDebugUnitTest
+          if-no-files-found: ignore
+          retention-days: 14
+
       # Decoded outside the workspace so it can never be picked up by a build
       # or swept into an uploaded artifact.
       - name: Decode keystore

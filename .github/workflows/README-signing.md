@@ -45,6 +45,10 @@ gh secret set RELEASE_KEY_PASSWORD
   and auto-generated notes.
 - **Manual run** — the `Run workflow` button, same as a push to `main`.
 
+Every path runs `testDebugUnitTest` first and stops if it fails, so a tag can't
+cut a Release from code whose tests are broken. The step sits ahead of the
+keystore decode, so a failing build never puts the signing key on disk.
+
 The keystore is decoded to `$RUNNER_TEMP` (outside the checkout) and deleted
 after the build, so it can't end up inside an uploaded artifact.
 
