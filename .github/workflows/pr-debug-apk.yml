@@ -5,6 +5,9 @@ on:
     branches: [main]
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 # One debug build per PR; a new push supersedes the in-flight one.
 concurrency:
   group: pr-debug-apk-${{ github.event.pull_request.number || github.ref }}
