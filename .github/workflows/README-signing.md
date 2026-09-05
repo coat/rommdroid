@@ -48,6 +48,46 @@ gh secret set RELEASE_KEY_PASSWORD
 The keystore is decoded to `$RUNNER_TEMP` (outside the checkout) and deleted
 after the build, so it can't end up inside an uploaded artifact.
 
+## Debug APKs on pull requests
+
+`PR Debug APK` (`.github/workflows/pr-debug-apk.yml`) runs `assembleDebug` on
+every PR targeting `main` and attaches the APK to the run, kept for 14 days.
+Grab it from the run's **Artifacts** section to test a branch on a device.
+
+It needs none of the secrets above — debug builds sign with the committed
+`app/debug.keystore` (below), so it also works on PRs from forks, where secrets
+aren't available.
+
+Debug and release install side by side (`applicationId` suffix `.debug`), and
+the debug launcher icon reads **RomMDroid (Beta)** so they're tellable apart.
+The label comes from `app_launcher_name`, a `resValue` the `debug` build type
+overrides in `app/build.gradle.kts`.
+
+## The committed debug keystore
+
+`app/debug.keystore` is in the repo on purpose, wired up as the `debug`
+`signingConfig` in `app/build.gradle.kts`. It uses the Android debug defaults:
+
+| | |
+| --- | --- |
+| Alias | `androiddebugkey` |
+| Store / key password | `android` |
+| DN | `CN=Android Debug, O=Android, C=US` |
+| SHA-256 | `78:51:DB:42:...:CE:3A:11:6A` |
+| Expires | 2056-08-28 |
+
+Without it, each machine and each CI runner signs with its own auto-generated
+`~/.android/debug.keystore`, so a debug APK from CI won't install over one you
+built locally — `INSTALL_FAILED_UPDATE_INCOMPATIBLE`. Sharing one key means any
+debug APK upgrades any other, wherever it was built.
+
+It is not a secret and guards nothing: the passwords are public, it can't sign
+a release, and Play won't accept it. Do not reuse it for anything else.
+
+**One-time step:** a debug build installed before this key existed was signed
+with your old local key, so the first new build won't install over it. Run
+`adb uninstall app.rommdroid.debug` once. Release installs are unaffected.
+
 ## Version codes
 
 `versionCode` comes from `github.run_number` in CI, so every build gets its own

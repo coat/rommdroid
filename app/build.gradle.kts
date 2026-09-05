@@ -29,8 +29,10 @@ android {
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
-        // App name is in strings.xml — easy to change without touching build files
-        resValue("string", "app_display_name", "RomMDroid")
+        // Launcher label. Build types override this so a debug build sitting
+        // next to a release one on the same device is tellable apart at a
+        // glance — see the resValue in the debug block below.
+        resValue("string", "app_launcher_name", "RomMDroid")
     }
 
     // Release signing. Values come from local.properties (untracked) or, for CI,
@@ -46,6 +48,17 @@ android {
     val releaseStorePath = signingValue("release.storeFile", "RELEASE_STORE_FILE")
 
     signingConfigs {
+        // Checked into the repo on purpose. The SDK's auto-generated debug key
+        // differs per machine and per CI runner, so debug APKs from two sources
+        // can't be installed over each other. A shared key fixes that; the
+        // credentials are the Android debug defaults and guard nothing.
+        getByName("debug") {
+            storeFile     = file("debug.keystore")
+            storePassword = "android"
+            keyAlias      = "androiddebugkey"
+            keyPassword   = "android"
+        }
+
         if (releaseStorePath != null) {
             create("release") {
                 storeFile     = rootProject.file(releaseStorePath)
@@ -69,6 +82,9 @@ android {
         debug {
             applicationIdSuffix = ".debug"
             versionNameSuffix   = "-debug"
+            // Overrides the defaultConfig value above (build types win), so the
+            // debug launcher icon reads "RomMDroid (Beta)".
+            resValue("string", "app_launcher_name", "RomMDroid (Beta)")
         }
     }
 
