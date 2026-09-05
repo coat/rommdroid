@@ -1,14 +1,10 @@
 package app.rommdroid.ui.screens
 
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.text.input.ImeAction
-import androidx.compose.ui.text.input.KeyboardType
-import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.ViewModel
@@ -24,6 +20,10 @@ import kotlinx.serialization.json.jsonObject
 import retrofit2.HttpException
 import app.rommdroid.data.api.RomMApi
 import app.rommdroid.data.repository.CredentialRepository
+import android.view.inputmethod.EditorInfo
+import app.rommdroid.ui.components.InputKind
+import app.rommdroid.ui.components.OutlinedInputField
+import app.rommdroid.ui.components.rememberInputFieldHandle
 import javax.inject.Inject
 
 // ── ViewModel ─────────────────────────────────────────────────────────────────
@@ -110,6 +110,12 @@ fun SetupScreen(
     var username  by remember { mutableStateOf("") }
     var password  by remember { mutableStateOf("") }
 
+    // "Next" on the keyboard walks down the form.  Android's focus search does
+    // not cross the Compose/View boundary between these fields, so hand each one
+    // the next field explicitly.
+    val usernameField = rememberInputFieldHandle()
+    val passwordField = rememberInputFieldHandle()
+
     LaunchedEffect(state) {
         if (state is SetupState.Done) onComplete()
     }
@@ -130,43 +136,39 @@ fun SetupScreen(
 
             Spacer(Modifier.height(32.dp))
 
-            OutlinedTextField(
+            OutlinedInputField(
                 value         = serverUrl,
                 onValueChange = { serverUrl = it },
-                label         = { Text("Server URL") },
-                placeholder   = { Text("http://romm.local") },
-                singleLine    = true,
-                keyboardOptions = KeyboardOptions(
-                    keyboardType = KeyboardType.Uri,
-                    imeAction    = ImeAction.Next,
-                ),
-                modifier = Modifier.fillMaxWidth(),
+                label         = "Server URL",
+                placeholder   = "http://romm.local",
+                inputKind     = InputKind.Uri,
+                imeAction     = EditorInfo.IME_ACTION_NEXT,
+                onImeAction   = { usernameField.requestFocus() },
+                modifier      = Modifier.fillMaxWidth(),
             )
 
             Spacer(Modifier.height(12.dp))
 
-            OutlinedTextField(
+            OutlinedInputField(
                 value         = username,
                 onValueChange = { username = it },
-                label         = { Text("Username") },
-                singleLine    = true,
-                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next),
-                modifier = Modifier.fillMaxWidth(),
+                label         = "Username",
+                imeAction     = EditorInfo.IME_ACTION_NEXT,
+                handle        = usernameField,
+                onImeAction   = { passwordField.requestFocus() },
+                modifier      = Modifier.fillMaxWidth(),
             )
 
             Spacer(Modifier.height(12.dp))
 
-            OutlinedTextField(
-                value                  = password,
-                onValueChange          = { password = it },
-                label                  = { Text("Password") },
-                singleLine             = true,
-                visualTransformation   = PasswordVisualTransformation(),
-                keyboardOptions        = KeyboardOptions(
-                    keyboardType = KeyboardType.Password,
-                    imeAction    = ImeAction.Done,
-                ),
-                modifier = Modifier.fillMaxWidth(),
+            OutlinedInputField(
+                value         = password,
+                onValueChange = { password = it },
+                label         = "Password",
+                inputKind     = InputKind.Password,
+                imeAction     = EditorInfo.IME_ACTION_DONE,
+                handle        = passwordField,
+                modifier      = Modifier.fillMaxWidth(),
             )
 
             if (state is SetupState.Error) {
