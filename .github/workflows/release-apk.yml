@@ -4,9 +4,15 @@ on:
   push:
     branches: [main]
     tags: ['v*']
+  # Creating a Release in the web UI is the other way a version ships. The
+  # publish steps below are idempotent, so if this and the tag push both fire
+  # for one tag, whichever survives the concurrency group still does the job.
+  release:
+    types: [published]
   workflow_dispatch:
 
-# Needed by the "Publish GitHub Release" step (tag builds only).
+# Needed by the publish steps: creating releases, uploading assets, and moving
+# the rolling main-latest tag.
 permissions:
   contents: write
 
@@ -51,6 +57,23 @@ jobs:
             echo "::error::Missing repository secrets:$missing — see .github/workflows/README-signing.md"
             exit 1
           fi
+
+      # Gates everything below, so a tag or a direct push to main can't cut a
+      # release from code whose tests fail. Merges from PRs have already run
+      # this, but tag builds and direct pushes would otherwise skip it.
+      # Deliberately ahead of the keystore decode: no reason to put the signing
+      # key on disk for a build that is about to fail.
+      - name: Run unit tests
+        run: ./gradlew --no-daemon testDebugUnitTest
+
+      - name: Upload test report
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: unit-test-report
+          path: app/build/reports/tests/testDebugUnitTest
+          if-no-files-found: ignore
+          retention-days: 14
 
       # Decoded outside the workspace so it can never be picked up by a build
       # or swept into an uploaded artifact.
@@ -102,14 +125,45 @@ jobs:
           if-no-files-found: error
           retention-days: 90
 
-      # Only tag pushes cut an actual GitHub Release; merges to main just
-      # leave the APK attached to the run.
-      - name: Publish GitHub Release
+      # Release assets download as-is, unlike the zipped artifact above, so
+      # this is the link to open on a phone. Written to tolerate the release
+      # already existing: a Release created in the web UI is already there by
+      # the time this runs, and plain `gh release create` would fail on it.
+      - name: Publish tagged release
         if: startsWith(github.ref, 'refs/tags/v')
         env:
           GH_TOKEN: ${{ github.token }}
+          APK: ${{ steps.apk.outputs.path }}
         run: |
-          gh release create "${GITHUB_REF_NAME}" \
-            "${{ steps.apk.outputs.path }}" \
-            --title "${GITHUB_REF_NAME}" \
-            --generate-notes
+          if ! gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release create "$GITHUB_REF_NAME" \
+              --title "$GITHUB_REF_NAME" \
+              --generate-notes
+          fi
+          gh release upload "$GITHUB_REF_NAME" "$APK" --clobber
+
+      # Merges to main refresh a single rolling prerelease, so the newest main
+      # build always has a stable, unzipped download URL. Marked --latest=false
+      # so it never displaces a real version as the repo's "Latest release".
+      - name: Publish rolling main build
+        if: github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          APK: ${{ steps.apk.outputs.path }}
+          TAG: main-latest
+        run: |
+          # Point the rolling tag at this commit. It doesn't match the 'v*'
+          # trigger filter, so this push can't re-enter the workflow.
+          git tag -f "$TAG"
+          git push -f origin "refs/tags/$TAG"
+
+          notes="Automatic build of main at ${GITHUB_SHA::7} — not a tagged version."
+
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release edit "$TAG" --prerelease --latest=false \
+              --title 'Latest main build' --notes "$notes"
+          else
+            gh release create "$TAG" --prerelease --latest=false \
+              --title 'Latest main build' --notes "$notes"
+          fi
+          gh release upload "$TAG" "$APK" --clobber

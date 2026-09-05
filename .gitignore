@@ -12,5 +12,8 @@ captures/
 keystore.jks
 *.jks
 *.keystore
+# ...except the shared debug key, which is deliberately committed: it holds no
+# secret and every debug build has to use it. See .github/workflows/README-signing.md
+!app/debug.keystore
 keystore.properties
 .kotlin/

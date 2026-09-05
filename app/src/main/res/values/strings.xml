@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <!-- Change this to rename the app without touching build files -->
+    <!-- In-app name. The launcher label is app_launcher_name, generated per
+         build type in app/build.gradle.kts so debug builds read "(Beta)". -->
     <string name="app_name">RomMDroid</string>
 </resources>
