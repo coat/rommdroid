@@ -15,7 +15,13 @@ import dagger.assisted.Assisted
 import dagger.assisted.AssistedInject
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import app.rommdroid.data.db.DownloadDao
+import app.rommdroid.data.db.DownloadStatus
 import app.rommdroid.data.repository.CredentialRepository
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.withContext
 import java.io.IOException
 import java.util.concurrent.TimeUnit
 
@@ -26,13 +32,15 @@ import java.util.concurrent.TimeUnit
  * The worker is resumable by WorkManager (enqueue with [ExistingWorkPolicy.KEEP]).
  *
  * Input data keys: [KEY_URL], [KEY_FILE_NAME], [KEY_DESTINATION_URI],
- *                  [KEY_ROM_ID], [KEY_EXPECTED_BYTES]
+ *                  [KEY_ROM_ID], [KEY_EXPECTED_BYTES], [KEY_QUEUE_ID]
  */
 @HiltWorker
 class DownloadWorker @AssistedInject constructor(
     @Assisted context: Context,
     @Assisted params: WorkerParameters,
     private val credentials: CredentialRepository,
+    private val downloads: DownloadDao,
+    private val localRoms: LocalRomIndex,
 ) : CoroutineWorker(context, params) {
 
     companion object {
@@ -44,6 +52,7 @@ class DownloadWorker @AssistedInject constructor(
         const val KEY_SUBFOLDER       = "subfolder"        // optional dir under the tree
         const val KEY_ROM_ID          = "rom_id"
         const val KEY_EXPECTED_BYTES  = "expected_bytes"
+        const val KEY_QUEUE_ID        = "queue_id"        // row in the downloads table
 
         const val PROGRESS_BYTES      = "bytes_downloaded"
         const val PROGRESS_TOTAL      = "total_bytes"
@@ -60,6 +69,7 @@ class DownloadWorker @AssistedInject constructor(
             romId: Int,
             expectedBytes: Long,
             subfolder: String? = null,
+            queueId: String? = null,
         ) = Data.Builder()
             .putString(KEY_URL, url)
             .putString(KEY_FILE_NAME, fileName)
@@ -67,6 +77,7 @@ class DownloadWorker @AssistedInject constructor(
             .putString(KEY_SUBFOLDER, subfolder)
             .putInt(KEY_ROM_ID, romId)
             .putLong(KEY_EXPECTED_BYTES, expectedBytes)
+            .putString(KEY_QUEUE_ID, queueId)
             .build()
     }
 
@@ -75,6 +86,9 @@ class DownloadWorker @AssistedInject constructor(
         .connectTimeout(15, TimeUnit.SECONDS)
         .readTimeout(0, TimeUnit.SECONDS)
         .build()
+
+    /** The downloads-table row this work belongs to, when it was queued through it. */
+    private val queueId: String? get() = inputData.getString(KEY_QUEUE_ID)
 
     override suspend fun doWork(): Result {
         val url            = inputData.getString(KEY_URL)             ?: return fail("Missing download URL")
@@ -87,15 +101,33 @@ class DownloadWorker @AssistedInject constructor(
 
         createNotificationChannel()
         notifyProgress(fileName, 0, expectedBytes)
+        setStatus(DownloadStatus.RUNNING, null)
 
         return try {
-            download(url, fileName, destUriString, subfolder, expectedBytes)
+            // Copying a multi-gigabyte stream is blocking work; on the worker's
+            // default dispatcher it would occupy a CPU thread the ROM list needs
+            // for folding its variants, stalling the list while a download runs.
+            withContext(Dispatchers.IO) {
+                download(url, fileName, destUriString, subfolder, expectedBytes)
+            }
             Log.i(TAG, "Finished download of $fileName")
+            setStatus(DownloadStatus.SUCCEEDED, null)
+            // The folder now holds a file it did not before, so any cached
+            // listing showing this ROM as missing is stale.
+            localRoms.invalidate()
             Result.success()
+        } catch (e: CancellationException) {
+            // The user cancelled from the queue screen; the row is already
+            // marked there, and this scope is dead, so just get out.
+            throw e
         } catch (e: IOException) {
             Log.e(TAG, "Download of $fileName failed (attempt $runAttemptCount)", e)
-            if (runAttemptCount < 3) Result.retry()
-            else fail(e.message ?: "Download failed")
+            if (runAttemptCount < 3) {
+                setStatus(DownloadStatus.QUEUED, "Retrying — ${e.message}")
+                Result.retry()
+            } else {
+                fail(e.message ?: "Download failed")
+            }
         } catch (e: Exception) {
             // SecurityException (revoked SAF grant), IllegalStateException
             // (foreground service refused), IllegalArgumentException (bad URL)…
@@ -105,9 +137,28 @@ class DownloadWorker @AssistedInject constructor(
         }
     }
 
-    private fun fail(message: String): Result {
+    private suspend fun fail(message: String): Result {
         Log.e(TAG, "Download failed: $message")
+        setStatus(DownloadStatus.FAILED, message)
         return Result.failure(workDataOf(KEY_ERROR to message))
+    }
+
+    /**
+     * Record progress in the queue table.
+     *
+     * Uncancellable on purpose: the interesting write is the one that happens
+     * as the job ends, and a cancelled scope would otherwise drop it and leave
+     * the row stuck on "Downloading" forever.
+     */
+    private suspend fun setStatus(status: DownloadStatus, error: String?) {
+        val id = queueId ?: return
+        try {
+            withContext(NonCancellable) {
+                downloads.updateStatus(id, status, error, System.currentTimeMillis())
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Could not record $status for $id: ${e.message}")
+        }
     }
 
     private suspend fun download(
@@ -153,28 +204,37 @@ class DownloadWorker @AssistedInject constructor(
             val destFile = dir.createFile("application/octet-stream", fileName)
                 ?: throw IOException("Cannot create $fileName in destination")
 
-            applicationContext.contentResolver.openOutputStream(destFile.uri)?.use { out ->
-                val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
-                var downloaded = 0L
-                var lastNotified = 0L
+            // A half-written ROM left in the library folder is worse than no
+            // ROM at all — the emulator finds it and fails obscurely — so an
+            // interrupted transfer takes its file with it.
+            try {
+                applicationContext.contentResolver.openOutputStream(destFile.uri)?.use { out ->
+                    val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+                    var downloaded = 0L
+                    var lastNotified = 0L
 
-                body.byteStream().use { stream ->
-                    var bytesRead: Int
-                    while (stream.read(buffer).also { bytesRead = it } != -1) {
-                        out.write(buffer, 0, bytesRead)
-                        downloaded += bytesRead
+                    body.byteStream().use { stream ->
+                        var bytesRead: Int
+                        while (stream.read(buffer).also { bytesRead = it } != -1) {
+                            out.write(buffer, 0, bytesRead)
+                            downloaded += bytesRead
 
-                        // Update progress ~every 500 KB to avoid hammering WorkManager
-                        if (downloaded - lastNotified > 512 * 1024) {
-                            lastNotified = downloaded
-                            setProgress(workDataOf(PROGRESS_BYTES to downloaded, PROGRESS_TOTAL to total))
-                            notifyProgress(fileName, downloaded, total)
+                            // Update progress ~every 500 KB to avoid hammering WorkManager
+                            if (downloaded - lastNotified > 512 * 1024) {
+                                lastNotified = downloaded
+                                setProgress(workDataOf(PROGRESS_BYTES to downloaded, PROGRESS_TOTAL to total))
+                                notifyProgress(fileName, downloaded, total)
+                            }
                         }
                     }
-                }
-                out.flush()
-                setProgress(workDataOf(PROGRESS_BYTES to downloaded, PROGRESS_TOTAL to total))
-            } ?: throw IOException("Cannot open output stream")
+                    out.flush()
+                    setProgress(workDataOf(PROGRESS_BYTES to downloaded, PROGRESS_TOTAL to total))
+                } ?: throw IOException("Cannot open output stream")
+            } catch (e: Throwable) {
+                runCatching { destFile.delete() }
+                    .onFailure { Log.w(TAG, "Could not remove partial $fileName", it) }
+                throw e
+            }
         }
     }
 

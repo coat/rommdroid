@@ -6,6 +6,8 @@ import app.rommdroid.data.api.model.PlatformSchema
 import app.rommdroid.data.api.model.SimpleRomSchema
 import app.rommdroid.data.db.*
 import app.rommdroid.util.decodeHtmlEntities
+import app.rommdroid.util.romGroupKey
+import app.rommdroid.util.romRegions
 import kotlinx.coroutines.flow.Flow
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
@@ -90,6 +92,27 @@ class RomRepository @Inject constructor(
     /** Offline fallback — only covers platforms that have been synced. */
     suspend fun searchLocal(query: String): List<RomEntity> = romDao.search(query)
 
+    // ── Regional variants ─────────────────────────────────────────────────────
+
+    /**
+     * Every cached copy of the same game as [rom], newest sync wins.
+     *
+     * Returns just [rom] when nothing else is cached — which is the normal case
+     * for a ROM reached from search, since search results are not persisted.
+     */
+    suspend fun cachedVariants(rom: RomEntity): List<RomEntity> =
+        romDao.getByGroupKey(rom.groupKey).ifEmpty { listOf(rom) }
+
+    suspend fun getCachedRom(id: Int): RomEntity? = romDao.getById(id)
+
+    /** Whichever of [ids] have been synced, keyed by id. */
+    suspend fun getCachedRoms(ids: List<Int>): Map<Int, RomEntity> =
+        if (ids.isEmpty()) emptyMap() else romDao.getByIds(ids).associateBy { it.id }
+
+    /** Decoded region codes for [rom], falling back to its filename tags. */
+    fun regionsOf(rom: RomEntity): List<String> =
+        romRegions(rom) { json.decodeFromString(it) }
+
     // ── Download URL construction ─────────────────────────────────────────────
 
     /**
@@ -150,5 +173,6 @@ class RomRepository @Inject constructor(
         pathCoverSmall        = pathCoverSmall,
         pathCoverLarge        = pathCoverLarge,
         updatedAt             = updatedAt,
+        groupKey              = romGroupKey(platformId, igdbId, slug, fsNameNoTags),
     )
 }

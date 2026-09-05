@@ -18,7 +18,7 @@ data class PlatformEntity(
 
 @Entity(
     tableName = "roms",
-    indices = [Index("platformId"), Index("name")],
+    indices = [Index("platformId"), Index("name"), Index("groupKey")],
 )
 data class RomEntity(
     @PrimaryKey val id: Int,
@@ -39,6 +39,13 @@ data class RomEntity(
     val pathCoverSmall: String?,
     val pathCoverLarge: String?,
     val updatedAt: String?,
+    /**
+     * Identity shared by every regional copy of this game — see
+     * [app.rommdroid.util.romGroupKey].  Stored rather than computed on read so
+     * siblings can be looked up with an indexed query instead of scanning the
+     * whole platform.
+     */
+    val groupKey: String = "",
 )
 
 /**
@@ -120,6 +127,20 @@ interface RomDao {
     @Query("SELECT * FROM roms WHERE id = :id")
     suspend fun getById(id: Int): RomEntity?
 
+    /**
+     * Whichever of [ids] the cache happens to hold.
+     *
+     * The server's `sibling_roms` carries only names and ids, so the detail
+     * screen fills in filenames, sizes and regions from here when the sibling's
+     * platform has been synced.
+     */
+    @Query("SELECT * FROM roms WHERE id IN (:ids)")
+    suspend fun getByIds(ids: List<Int>): List<RomEntity>
+
+    /** Every cached copy of one game, including the ROM the key came from. */
+    @Query("SELECT * FROM roms WHERE groupKey = :groupKey ORDER BY fsName ASC")
+    suspend fun getByGroupKey(groupKey: String): List<RomEntity>
+
     @Upsert
     suspend fun upsertAll(roms: List<RomEntity>)
 
@@ -173,4 +194,71 @@ interface PlatformFolderDao {
 
     @Query("DELETE FROM platform_folders WHERE platformId = :platformId")
     suspend fun deleteForPlatform(platformId: Int)
+}
+
+// ── Download queue ────────────────────────────────────────────────────────────
+
+/**
+ * Where a queued download has got to.
+ *
+ * Mirrors the WorkManager states we care about, but persists past them:
+ * WorkManager prunes finished work after a while, and the queue screen should
+ * still be able to say what happened.
+ */
+enum class DownloadStatus {
+    QUEUED, RUNNING, SUCCEEDED, FAILED, CANCELLED;
+
+    val isFinished: Boolean get() = this != QUEUED && this != RUNNING
+}
+
+/**
+ * One file the user asked for, with everything needed to retry it offline.
+ *
+ * The URL and destination are stored rather than re-derived because a retry
+ * from the downloads screen should not depend on the ROM detail endpoint being
+ * reachable, nor on the platform still resolving to the same folder.
+ */
+@Entity(tableName = "downloads", indices = [Index("enqueuedAt"), Index("romId")])
+data class DownloadEntity(
+    /** "<romId>_<fileId>" — one row per file, so re-downloading reuses the row. */
+    @PrimaryKey val id: String,
+    val romId: Int,
+    val fileId: Int,
+    val fileName: String,
+    /** Display name of the game, for the queue screen. */
+    val romName: String,
+    val platformId: Int,
+    val platformName: String,
+    val sizeBytes: Long,
+    val url: String,
+    /** SAF tree the app holds a grant on. */
+    val treeUri: String,
+    /** Directory under [treeUri], created on demand; null for an override folder. */
+    val subfolder: String?,
+    val destinationPath: String,
+    val status: DownloadStatus,
+    val error: String? = null,
+    val enqueuedAt: Long,
+    val updatedAt: Long,
+)
+
+@Dao
+interface DownloadDao {
+    @Query("SELECT * FROM downloads ORDER BY enqueuedAt DESC")
+    fun observeAll(): Flow<List<DownloadEntity>>
+
+    @Query("SELECT * FROM downloads WHERE id = :id")
+    suspend fun getById(id: String): DownloadEntity?
+
+    @Upsert
+    suspend fun upsert(entity: DownloadEntity)
+
+    @Query("UPDATE downloads SET status = :status, error = :error, updatedAt = :now WHERE id = :id")
+    suspend fun updateStatus(id: String, status: DownloadStatus, error: String?, now: Long)
+
+    @Query("DELETE FROM downloads WHERE id IN (:ids)")
+    suspend fun deleteAll(ids: List<String>)
+
+    @Query("DELETE FROM downloads WHERE status NOT IN ('QUEUED', 'RUNNING')")
+    suspend fun deleteFinished()
 }

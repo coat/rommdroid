@@ -61,10 +61,12 @@ fun RomMDroidNavHost() {
         ) { backStack ->
             val platformId = backStack.arguments?.getInt(Route.RomList.ARG) ?: return@composable
             RomListScreen(
-                viewModel  = hiltViewModel(),
-                platformId = platformId,
-                onRomClick = { romId -> navController.navigate(Route.RomDetail.go(romId)) },
-                onBack     = { navController.popBackStack() },
+                viewModel        = hiltViewModel(),
+                platformId       = platformId,
+                onRomClick       = { romId -> navController.navigate(Route.RomDetail.go(romId)) },
+                onDownloadsClick = { navController.navigate(Route.Downloads.path) },
+                onFolderSettings = { navController.navigate(Route.FolderMapping.path) },
+                onBack           = { navController.popBackStack() },
             )
         }
 
@@ -84,17 +86,19 @@ fun RomMDroidNavHost() {
         // ── Search ────────────────────────────────────────────────────────────
         composable(Route.Search.path) {
             SearchScreen(
-                viewModel  = hiltViewModel(),
-                onRomClick = { romId -> navController.navigate(Route.RomDetail.go(romId)) },
-                onBack     = { navController.popBackStack() },
+                viewModel        = hiltViewModel(),
+                onRomClick       = { romId -> navController.navigate(Route.RomDetail.go(romId)) },
+                onFolderSettings = { navController.navigate(Route.FolderMapping.path) },
+                onBack           = { navController.popBackStack() },
             )
         }
 
         // ── Downloads ─────────────────────────────────────────────────────────
         composable(Route.Downloads.path) {
             DownloadsScreen(
-                viewModel = hiltViewModel(),
-                onBack    = { navController.popBackStack() },
+                viewModel  = hiltViewModel(),
+                onRomClick = { romId -> navController.navigate(Route.RomDetail.go(romId)) },
+                onBack     = { navController.popBackStack() },
             )
         }
 
