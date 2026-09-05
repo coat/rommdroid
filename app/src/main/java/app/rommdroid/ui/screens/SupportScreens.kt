@@ -47,6 +47,7 @@ import app.rommdroid.data.repository.DownloadTarget
 import app.rommdroid.data.repository.DownloadTargetRepository
 import app.rommdroid.data.repository.RomRepository
 import app.rommdroid.ui.components.OutlinedInputField
+import app.rommdroid.ui.components.rememberInputFieldHandle
 import app.rommdroid.util.RomGroup
 import app.rommdroid.util.formatSize
 import app.rommdroid.util.groupRoms
@@ -136,6 +137,7 @@ fun SearchScreen(
 
     val snackbarHostState = remember { SnackbarHostState() }
     val haptics = LocalHapticFeedback.current
+    val queryField = rememberInputFieldHandle()
 
     LaunchedEffect(Unit) {
         viewModel.messages.collect { message ->
@@ -160,11 +162,19 @@ fun SearchScreen(
         topBar = {
             TopAppBar(
                 title = {
+                    // Results follow the query as it is typed, so the Search
+                    // key has nothing to submit — it just puts the keyboard
+                    // away so the list underneath it is visible.  Without a
+                    // handler nothing happens at all: TextView's built-in
+                    // default hides the IME for Done but not for Search, and a
+                    // full-screen IME re-opens over the results straight away.
                     OutlinedInputField(
                         value         = query,
                         onValueChange = { viewModel.query.value = it },
                         placeholder   = "Search ROMs…",
                         imeAction     = EditorInfo.IME_ACTION_SEARCH,
+                        handle        = queryField,
+                        onImeAction   = { queryField.hideKeyboard() },
                         modifier      = Modifier.fillMaxWidth(),
                     )
                 },
