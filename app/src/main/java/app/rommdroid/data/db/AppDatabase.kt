@@ -10,8 +10,9 @@ import androidx.room.RoomDatabase
         PlatformFolderEntity::class,
         BaseFolderEntity::class,
         PlatformSubfolderEntity::class,
+        DownloadEntity::class,
     ],
-    version = 2,
+    version = 4,
     exportSchema = false,   // set to true + configure schemaLocation before release
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -20,4 +21,5 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun platformFolderDao(): PlatformFolderDao
     abstract fun baseFolderDao(): BaseFolderDao
     abstract fun platformSubfolderDao(): PlatformSubfolderDao
+    abstract fun downloadDao(): DownloadDao
 }

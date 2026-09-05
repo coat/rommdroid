@@ -3,7 +3,9 @@ package app.rommdroid.ui.screens
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -15,7 +17,9 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
@@ -28,14 +32,25 @@ import app.rommdroid.data.db.BaseFolderEntity
 import app.rommdroid.data.db.PlatformEntity
 import app.rommdroid.data.db.PlatformFolderDao
 import app.rommdroid.data.db.PlatformFolderEntity
+import app.rommdroid.data.db.DownloadStatus
 import app.rommdroid.data.db.PlatformSubfolderDao
 import app.rommdroid.data.db.PlatformSubfolderEntity
 import app.rommdroid.data.db.RomEntity
+import app.rommdroid.data.download.DownloadItem
+import app.rommdroid.data.download.DownloadQueue
+import app.rommdroid.data.download.LocalRomIndex
+import app.rommdroid.data.download.QueueMessage
+import app.rommdroid.data.download.asMessage
 import app.rommdroid.data.repository.CredentialRepository
 import app.rommdroid.data.repository.DownloadTarget
 import app.rommdroid.data.repository.DownloadTargetRepository
 import app.rommdroid.data.repository.RomRepository
+import app.rommdroid.util.RomGroup
 import app.rommdroid.util.formatSize
+import app.rommdroid.util.groupRoms
+import app.rommdroid.util.regionPreference
+import app.rommdroid.util.regionSummary
+import java.util.Locale
 import javax.inject.Inject
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -46,6 +61,7 @@ import javax.inject.Inject
 @HiltViewModel
 class SearchViewModel @Inject constructor(
     private val repo: RomRepository,
+    private val queue: DownloadQueue,
 ) : ViewModel() {
 
     val query = MutableStateFlow("")
@@ -54,34 +70,91 @@ class SearchViewModel @Inject constructor(
     /** True when the last search fell back to the (partial) local cache. */
     val offline: StateFlow<Boolean> = _offline.asStateFlow()
 
-    val results: StateFlow<List<RomEntity>> = query
+    val results: StateFlow<List<RomGroup>> = query
         .debounce(300)
         .mapLatest { q ->
             if (q.length < 2) return@mapLatest emptyList()
             // Search the server so every platform is covered, not just the ones
             // already synced into Room; drop to the cache only if it is down.
-            try {
+            val roms = try {
                 repo.searchRemote(q).also { _offline.value = false }
             } catch (e: Exception) {
                 _offline.value = true
                 repo.searchLocal(q)
             }
+            // Same fold as the platform list, so a search for "zelda" does not
+            // return the same game five times over.  The key carries the
+            // platform id, so cross-platform hits stay separate rows.
+            groupRoms(
+                roms             = roms,
+                preferredRegions = regionPreference(Locale.getDefault().country),
+                regionsOf        = repo::regionsOf,
+            )
         }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    /** Rows with a long-press in flight; the detail fetch takes a moment. */
+    private val _queueing = MutableStateFlow<Set<String>>(emptySet())
+    val queueing: StateFlow<Set<String>> = _queueing.asStateFlow()
+
+    private val _messages = MutableSharedFlow<QueueMessage>(extraBufferCapacity = 4)
+    val messages: SharedFlow<QueueMessage> = _messages.asSharedFlow()
+
+    /** Same long-press gesture as the ROM list: queue the copy the row shows. */
+    fun download(group: RomGroup) {
+        if (group.key in _queueing.value) return
+        viewModelScope.launch {
+            _queueing.value += group.key
+            try {
+                val result = queue.enqueueRom(group.primary.id)
+                _messages.emit(result.asMessage(regionSummary(repo.regionsOf(group.primary))))
+            } finally {
+                _queueing.value -= group.key
+            }
+        }
+    }
+
+    fun undo(ids: List<String>) {
+        viewModelScope.launch { queue.undo(ids) }
+    }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
 fun SearchScreen(
     viewModel: SearchViewModel,
     onRomClick: (Int) -> Unit,
+    onFolderSettings: () -> Unit,
     onBack: () -> Unit,
 ) {
-    val query   by viewModel.query.collectAsState()
-    val results by viewModel.results.collectAsState()
-    val offline by viewModel.offline.collectAsState()
+    val query    by viewModel.query.collectAsState()
+    val results  by viewModel.results.collectAsState()
+    val offline  by viewModel.offline.collectAsState()
+    val queueing by viewModel.queueing.collectAsState()
+
+    val snackbarHostState = remember { SnackbarHostState() }
+    val haptics = LocalHapticFeedback.current
+
+    LaunchedEffect(Unit) {
+        viewModel.messages.collect { message ->
+            val result = snackbarHostState.showSnackbar(
+                message     = message.text,
+                actionLabel = when {
+                    message.undoIds.isNotEmpty() -> "Undo"
+                    message.needsFolder          -> "Set folder"
+                    else                         -> null
+                },
+                duration    = SnackbarDuration.Short,
+            )
+            if (result == SnackbarResult.ActionPerformed) {
+                if (message.undoIds.isNotEmpty()) viewModel.undo(message.undoIds)
+                else if (message.needsFolder) onFolderSettings()
+            }
+        }
+    }
 
     Scaffold(
+        snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
             TopAppBar(
                 title = {
@@ -114,11 +187,35 @@ fun SearchScreen(
                     HorizontalDivider()
                 }
             }
-            items(results, key = { it.id }) { rom ->
+            items(results, key = { it.key }) { group ->
+                val rom = group.primary
                 ListItem(
-                    modifier          = Modifier.clickable { onRomClick(rom.id) },
+                    modifier = Modifier.combinedClickable(
+                        onClick          = { onRomClick(rom.id) },
+                        onLongClick      = {
+                            haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                            viewModel.download(group)
+                        },
+                        onLongClickLabel = "Download",
+                    ),
                     headlineContent   = { Text(rom.name ?: rom.fsNameNoTags) },
-                    supportingContent = { Text(rom.platformDisplayName) },
+                    supportingContent = {
+                        val flags = regionSummary(group.regions)
+                        val detail = if (group.hasVariants) {
+                            "${rom.platformDisplayName}  ·  ${group.size} versions"
+                        } else {
+                            rom.platformDisplayName
+                        }
+                        Text(if (flags.isEmpty()) detail else "$flags  ·  $detail")
+                    },
+                    trailingContent = {
+                        if (group.key in queueing) {
+                            CircularProgressIndicator(
+                                modifier    = Modifier.size(20.dp),
+                                strokeWidth = 2.dp,
+                            )
+                        }
+                    },
                 )
                 HorizontalDivider()
             }
@@ -131,14 +228,29 @@ fun SearchScreen(
 // ─────────────────────────────────────────────────────────────────────────────
 
 @HiltViewModel
-class DownloadsViewModel @Inject constructor() : ViewModel()
+class DownloadsViewModel @Inject constructor(
+    private val queue: DownloadQueue,
+) : ViewModel() {
+
+    val items: StateFlow<List<DownloadItem>> = queue.items
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    fun cancel(id: String)  { viewModelScope.launch { queue.cancel(id) } }
+    fun retry(id: String)   { viewModelScope.launch { queue.retry(id) } }
+    fun remove(id: String)  { viewModelScope.launch { queue.remove(id) } }
+    fun clearFinished()     { viewModelScope.launch { queue.clearFinished() } }
+}
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun DownloadsScreen(
     viewModel: DownloadsViewModel,
+    onRomClick: (Int) -> Unit,
     onBack: () -> Unit,
 ) {
+    val items by viewModel.items.collectAsState()
+    val (active, finished) = items.partition { !it.status.isFinished }
+
     Scaffold(
         topBar = {
             TopAppBar(
@@ -148,14 +260,145 @@ fun DownloadsScreen(
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back")
                     }
                 },
+                actions = {
+                    if (finished.isNotEmpty()) {
+                        TextButton(onClick = { viewModel.clearFinished() }) { Text("Clear") }
+                    }
+                },
             )
         }
     ) { padding ->
-        // TODO: observe WorkManager state for download jobs tagged "rom_*"
-        Box(Modifier.fillMaxSize().padding(padding), Alignment.Center) {
-            Text("Download queue coming soon", style = MaterialTheme.typography.bodyLarge)
+        if (items.isEmpty()) {
+            Column(
+                Modifier.fillMaxSize().padding(padding).padding(32.dp),
+                verticalArrangement   = Arrangement.Center,
+                horizontalAlignment   = Alignment.CenterHorizontally,
+            ) {
+                Icon(
+                    Icons.Default.Download,
+                    contentDescription = null,
+                    modifier = Modifier.size(48.dp),
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Spacer(Modifier.height(12.dp))
+                Text("Nothing downloading", style = MaterialTheme.typography.titleMedium)
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    "Long-press a game in any ROM list to add it here.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            return@Scaffold
+        }
+
+        LazyColumn(Modifier.fillMaxSize().padding(padding)) {
+            if (active.isNotEmpty()) {
+                item { QueueHeader("In progress · ${active.size}") }
+                items(active, key = { it.id }) { item ->
+                    DownloadRow(
+                        item     = item,
+                        onClick  = { onRomClick(item.romId) },
+                        onCancel = { viewModel.cancel(item.id) },
+                        onRetry  = { viewModel.retry(item.id) },
+                        onRemove = { viewModel.remove(item.id) },
+                    )
+                    HorizontalDivider()
+                }
+            }
+            if (finished.isNotEmpty()) {
+                item { QueueHeader("Finished") }
+                items(finished, key = { it.id }) { item ->
+                    DownloadRow(
+                        item     = item,
+                        onClick  = { onRomClick(item.romId) },
+                        onCancel = { viewModel.cancel(item.id) },
+                        onRetry  = { viewModel.retry(item.id) },
+                        onRemove = { viewModel.remove(item.id) },
+                    )
+                    HorizontalDivider()
+                }
+            }
         }
     }
+}
+
+@Composable
+private fun QueueHeader(text: String) {
+    Text(
+        text,
+        style    = MaterialTheme.typography.titleSmall,
+        color    = MaterialTheme.colorScheme.primary,
+        modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+    )
+}
+
+@Composable
+private fun DownloadRow(
+    item: DownloadItem,
+    onClick: () -> Unit,
+    onCancel: () -> Unit,
+    onRetry: () -> Unit,
+    onRemove: () -> Unit,
+) {
+    Column(Modifier.clickable(onClick = onClick)) {
+        ListItem(
+            headlineContent   = { Text(item.fileName, maxLines = 2) },
+            supportingContent = {
+                Column {
+                    Text("${item.romName}  ·  ${item.platformName}")
+                    Text(
+                        item.statusLine(),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = if (item.status == DownloadStatus.FAILED)
+                            MaterialTheme.colorScheme.error
+                        else MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            },
+            trailingContent = {
+                when (item.status) {
+                    // Cancelling is the only useful thing to do to a transfer
+                    // that has not finished; everything else is after the fact.
+                    DownloadStatus.QUEUED, DownloadStatus.RUNNING ->
+                        IconButton(onClick = onCancel) {
+                            Icon(Icons.Default.Close, contentDescription = "Cancel")
+                        }
+                    DownloadStatus.FAILED, DownloadStatus.CANCELLED ->
+                        IconButton(onClick = onRetry) {
+                            Icon(Icons.Default.Refresh, contentDescription = "Retry")
+                        }
+                    DownloadStatus.SUCCEEDED ->
+                        IconButton(onClick = onRemove) {
+                            Icon(Icons.Default.Close, contentDescription = "Remove from list")
+                        }
+                }
+            },
+        )
+        if (item.status == DownloadStatus.RUNNING) {
+            val progress = item.progress
+            if (progress != null) {
+                LinearProgressIndicator(
+                    progress = { progress },
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
+                )
+            } else {
+                LinearProgressIndicator(
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
+                )
+            }
+        }
+    }
+}
+
+/** One line saying where this download has got to, and where it is going. */
+private fun DownloadItem.statusLine(): String = when (status) {
+    DownloadStatus.QUEUED    -> "Waiting  ·  ${totalBytes.formatSize()}  →  $destinationPath"
+    DownloadStatus.RUNNING   ->
+        "${downloadedBytes.formatSize()} / ${totalBytes.formatSize()}  →  $destinationPath"
+    DownloadStatus.SUCCEEDED -> "Saved to $destinationPath  ·  ${totalBytes.formatSize()}"
+    DownloadStatus.FAILED    -> error ?: "Download failed"
+    DownloadStatus.CANCELLED -> "Cancelled"
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -299,6 +542,7 @@ class FolderMappingViewModel @Inject constructor(
     private val baseFolderDao: BaseFolderDao,
     private val subfolderDao: PlatformSubfolderDao,
     private val targets: DownloadTargetRepository,
+    private val localRoms: LocalRomIndex,
 ) : ViewModel() {
 
     val baseFolder: StateFlow<BaseFolderEntity?> =
@@ -330,19 +574,24 @@ class FolderMappingViewModel @Inject constructor(
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
     fun setBaseFolder(uri: String, displayPath: String) {
-        viewModelScope.launch { targets.setBaseFolder(uri, displayPath) }
+        viewModelScope.launch {
+            targets.setBaseFolder(uri, displayPath)
+            localRoms.invalidate()
+        }
     }
 
     /** Point a single platform at a directory outside the base folder. */
     fun setPlatformFolder(platformId: Int, uri: String, displayPath: String) {
         viewModelScope.launch {
             folderDao.upsert(PlatformFolderEntity(platformId, uri, displayPath))
+            localRoms.invalidate()
         }
     }
 
     fun renameSubfolder(platformId: Int, name: String) {
         viewModelScope.launch {
             subfolderDao.upsert(PlatformSubfolderEntity(platformId, name.trim().trim('/')))
+            localRoms.invalidate()
         }
     }
 
@@ -351,6 +600,7 @@ class FolderMappingViewModel @Inject constructor(
         viewModelScope.launch {
             folderDao.deleteForPlatform(platformId)
             subfolderDao.deleteForPlatform(platformId)
+            localRoms.invalidate()
         }
     }
 }

@@ -1,11 +1,13 @@
 package app.rommdroid.ui.screens
 
-import android.net.Uri
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material3.*
@@ -17,22 +19,38 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import androidx.work.*
 import coil3.compose.AsyncImage
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 import app.rommdroid.data.api.model.DetailedRomSchema
 import app.rommdroid.data.api.model.RomFileSchema
+import app.rommdroid.data.api.model.SimpleRomSchema
+import app.rommdroid.data.db.DownloadStatus
 import app.rommdroid.data.db.PlatformDao
-import app.rommdroid.data.download.DownloadWorker
+import app.rommdroid.data.db.RomEntity
+import app.rommdroid.data.download.DownloadItem
+import app.rommdroid.data.download.DownloadQueue
+import app.rommdroid.data.download.FolderContents
+import app.rommdroid.data.download.LocalRomIndex
+import app.rommdroid.data.download.QueueMessage
+import app.rommdroid.data.download.asMessage
+import app.rommdroid.data.download.downloadableFiles
 import app.rommdroid.data.repository.CredentialRepository
 import app.rommdroid.data.repository.DownloadTarget
 import app.rommdroid.data.repository.DownloadTargetRepository
 import app.rommdroid.data.repository.RomRepository
 import app.rommdroid.ui.navigation.Route
+import app.rommdroid.util.RomVariant
 import app.rommdroid.util.artworkUrl
 import app.rommdroid.util.formatSize
+import app.rommdroid.util.regionPreference
+import app.rommdroid.util.regionRank
+import app.rommdroid.util.regionsFor
+import app.rommdroid.util.regionSummary
+import java.util.Locale
 import javax.inject.Inject
 
 // ── ViewModel ─────────────────────────────────────────────────────────────────
@@ -43,6 +61,7 @@ sealed interface RomDetailState {
     data class  Error(val message: String) : RomDetailState
 }
 
+@OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
 @HiltViewModel
 class RomDetailViewModel @Inject constructor(
     savedStateHandle: SavedStateHandle,
@@ -50,47 +69,130 @@ class RomDetailViewModel @Inject constructor(
     private val credentials: CredentialRepository,
     private val platformDao: PlatformDao,
     private val downloadTargets: DownloadTargetRepository,
-    private val workManager: WorkManager,
+    private val queue: DownloadQueue,
+    private val localRoms: LocalRomIndex,
 ) : ViewModel() {
 
-    private val romId: Int = checkNotNull(savedStateHandle[Route.RomDetail.ARG])
+    /** The variant currently being shown; changes when the user picks another. */
+    private val _romId = MutableStateFlow<Int>(
+        checkNotNull(savedStateHandle[Route.RomDetail.ARG])
+    )
+    val romId: StateFlow<Int> = _romId.asStateFlow()
 
     private val _state = MutableStateFlow<RomDetailState>(RomDetailState.Loading)
     val state: StateFlow<RomDetailState> = _state.asStateFlow()
 
+    /**
+     * Every regional copy of this game, preferred region first.  Holds a single
+     * entry for games that only exist once, and the picker stays hidden then.
+     */
+    private val _variants = MutableStateFlow<List<RomVariant>>(emptyList())
+    val variants: StateFlow<List<RomVariant>> = _variants.asStateFlow()
+
     private val _target = MutableStateFlow<DownloadTarget?>(null)
     val target: StateFlow<DownloadTarget?> = _target.asStateFlow()
 
-    /** Live state of every download enqueued for this ROM, keyed by file id. */
-    val downloads: StateFlow<Map<Int, WorkInfo>> =
-        workManager.getWorkInfosByTagFlow("rom_$romId")
-            .map { infos ->
-                infos.mapNotNull { info ->
-                    val fileId = info.tags
-                        .firstOrNull { it.startsWith(TAG_FILE_PREFIX) }
-                        ?.removePrefix(TAG_FILE_PREFIX)
-                        ?.toIntOrNull()
-                        ?: return@mapNotNull null
-                    fileId to info
-                }.toMap()
-            }
+    /** Live state of every download queued for this ROM, keyed by file id. */
+    val downloads: StateFlow<Map<Int, DownloadItem>> =
+        _romId.flatMapLatest { id ->
+            queue.items.map { items -> items.filter { it.romId == id }.associateBy { it.fileId } }
+        }
             .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyMap())
 
-    private val _messages = MutableSharedFlow<String>(extraBufferCapacity = 4)
-    val messages: SharedFlow<String> = _messages.asSharedFlow()
+    /**
+     * What the destination folder already holds.
+     *
+     * Read from the folder rather than inferred from [downloads] so a ROM the
+     * user already has — copied from a PC, kept through a reinstall, fetched
+     * before this app existed — is still reported as theirs.
+     */
+    val onDevice: StateFlow<FolderContents> =
+        combine(_target, localRoms.revision) { target, _ -> target }
+            .mapLatest { target -> target?.let { localRoms.listing(it) } ?: FolderContents.Unreadable }
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), FolderContents.Unreadable)
 
-    init {
-        viewModelScope.launch {
+    private val _messages = MutableSharedFlow<QueueMessage>(extraBufferCapacity = 4)
+    val messages: SharedFlow<QueueMessage> = _messages.asSharedFlow()
+
+    /** True while a variant is being fetched over an already-rendered screen. */
+    private val _refreshing = MutableStateFlow(false)
+    val refreshing: StateFlow<Boolean> = _refreshing.asStateFlow()
+
+    private var loadJob: Job? = null
+
+    init { load(_romId.value) }
+
+    /** Show a different regional copy of the same game. */
+    fun selectVariant(id: Int) {
+        if (id == _romId.value) return
+        _romId.value = id
+        load(id)
+    }
+
+    private fun load(id: Int) {
+        // Tapping down a long variant list should not leave earlier fetches
+        // racing to overwrite the selection the user actually landed on.
+        loadJob?.cancel()
+        loadJob = viewModelScope.launch {
+            // Switching variants keeps the current detail on screen rather than
+            // collapsing back to a spinner and losing the picker mid-tap.
+            if (_state.value !is RomDetailState.Loaded) {
+                _state.value = RomDetailState.Loading
+            }
+            _refreshing.value = true
             try {
-                val rom = repo.getRomDetail(romId)
+                val rom = repo.getRomDetail(id)
                 _state.value = RomDetailState.Loaded(rom)
                 _target.value = platformDao.getById(rom.platformId)
                     ?.let { downloadTargets.resolve(it) }
+                _variants.value = variantsOf(rom)
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
-                android.util.Log.e("RomDetail", "Failed to load ROM $romId", e)
+                android.util.Log.e("RomDetail", "Failed to load ROM $id", e)
                 _state.value = RomDetailState.Error(e.message ?: "Failed to load ROM")
+            } finally {
+                _refreshing.value = false
             }
         }
+    }
+
+    /**
+     * The sibling list the server computed, or the local cache when the server
+     * reported none.  The cache is the fallback rather than the primary source
+     * because a ROM reached from search may belong to a platform that was never
+     * synced, so Room would only know about the one ROM.
+     */
+    private suspend fun variantsOf(rom: DetailedRomSchema): List<RomVariant> {
+        val preference = regionPreference(Locale.getDefault().country)
+        // `sibling_roms` is a trimmed schema — ids and names, but no fs_name,
+        // no size and no regions — so a sibling rendered straight from it is a
+        // blank row reading "0 B".  The cache has all three whenever the
+        // sibling's platform has been synced, which is the usual case.
+        val cached = repo.getCachedRoms(rom.siblingRoms.map { it.id })
+        val fromServer = buildList {
+            add(RomVariant(rom.id, rom.fsName, rom.fsSizeBytes, regionsFor(rom.regions, rom.fsName)))
+            rom.siblingRoms.forEach { sibling ->
+                val entity = cached[sibling.id]
+                add(
+                    if (entity != null) entity.toVariant(repo.regionsOf(entity))
+                    else sibling.toVariant()
+                )
+            }
+        }
+        val variants = if (fromServer.size > 1) {
+            fromServer
+        } else {
+            val cached = repo.getCachedRom(rom.id)?.let { repo.cachedVariants(it) }.orEmpty()
+            if (cached.size > 1) {
+                cached.map { RomVariant(it.id, it.fsName, it.fsSizeBytes, repo.regionsOf(it)) }
+            } else {
+                fromServer
+            }
+        }
+        return variants
+            .distinctBy { it.id }
+            .sortedWith(compareBy({ regionRank(it.regions, preference) }, { it.fsName }))
     }
 
     fun coverUrl(rom: DetailedRomSchema): String? = artworkUrl(
@@ -100,61 +202,52 @@ class RomDetailViewModel @Inject constructor(
         rom.urlCover,
     )
 
-    /**
-     * Enqueue a WorkManager download for [file].
-     * If no folder is mapped for the platform, returns false and the caller
-     * should prompt the user to map a folder first.
-     */
-    fun downloadFile(file: RomFileSchema): Boolean {
-        val rom = (_state.value as? RomDetailState.Loaded)?.rom ?: return false
-        val target = _target.value ?: return false
-        val serverUrl = credentials.serverUrl ?: return false
-
-        // For synthetic single-file ROMs (id=0), don't pass file_ids — the API
-        // will serve the primary file by name without needing an ID filter.
-        val fileIds = if (file.id == 0) emptyList() else listOf(file.id)
-        val url = try {
-            repo.romDownloadUrl(serverUrl, rom.id, file.fileName, fileIds)
-        } catch (e: IllegalArgumentException) {
-            // A stored server URL missing its scheme would otherwise throw on
-            // the main thread and take the app down on tap.
-            android.util.Log.e("RomDetail", "Bad server URL: $serverUrl", e)
-            _messages.tryEmit("Invalid server URL — reconnect in Settings")
-            return true
+    /** Queue [file]; the queue itself reports what came of it. */
+    fun downloadFile(file: RomFileSchema) {
+        val rom = (_state.value as? RomDetailState.Loaded)?.rom ?: return
+        viewModelScope.launch {
+            _messages.emit(queue.enqueue(rom, listOf(file)).asMessage())
         }
-
-        val inputData = DownloadWorker.buildRequest(
-            url            = url,
-            fileName       = file.fileName,
-            destinationUri = target.treeUri,
-            romId          = rom.id,
-            expectedBytes  = file.fileSizeBytes,
-            subfolder      = target.subfolder,
-        )
-
-        val request = OneTimeWorkRequestBuilder<DownloadWorker>()
-            .setInputData(inputData)
-            .setConstraints(
-                Constraints.Builder()
-                    .setRequiredNetworkType(NetworkType.CONNECTED)
-                    .build()
-            )
-            .addTag("rom_${rom.id}")
-            .addTag("$TAG_FILE_PREFIX${file.id}")
-            .build()
-
-        workManager.enqueueUniqueWork(
-            "download_${rom.id}_${file.id}",
-            ExistingWorkPolicy.KEEP,
-            request,
-        )
-        _messages.tryEmit("Queued ${file.fileName}")
-        return true
     }
 
-    private companion object {
-        const val TAG_FILE_PREFIX = "file_"
+    /** Queue every file of the ROM — the whole set for a multi-disc game. */
+    fun downloadAll() {
+        val rom = (_state.value as? RomDetailState.Loaded)?.rom ?: return
+        viewModelScope.launch {
+            _messages.emit(queue.enqueue(rom, rom.downloadableFiles()).asMessage())
+        }
     }
+
+    fun undo(ids: List<String>) {
+        viewModelScope.launch { queue.undo(ids) }
+    }
+
+    fun cancel(id: String) {
+        viewModelScope.launch { queue.cancel(id) }
+    }
+
+}
+
+/** A cached copy, which knows its own filename and size. */
+private fun RomEntity.toVariant(regions: List<String>) =
+    RomVariant(id, fsName, fsSizeBytes, regions)
+
+/**
+ * A sibling the cache has never seen.
+ *
+ * The server omits `fs_name` from siblings, so the label falls back through the
+ * names it does send.  `fs_name_no_ext` comes first because it still carries the
+ * "(Japan)" / "(Rev 1)" tag, which is the only thing distinguishing one copy of
+ * a game from another — and distinguishing them is the entire job of this row.
+ * The size stays 0, meaning "unknown", and the row omits it rather than lying.
+ */
+private fun SimpleRomSchema.toVariant(): RomVariant {
+    val label = fsName
+        .ifBlank { fsNameNoExt }
+        .ifBlank { fsNameNoTags }
+        .ifBlank { name.orEmpty() }
+        .ifBlank { "ROM #$id" }
+    return RomVariant(id, label, fsSizeBytes, regionsFor(regions, label))
 }
 
 // ── Screen ────────────────────────────────────────────────────────────────────
@@ -169,12 +262,22 @@ fun RomDetailScreen(
     val state          by viewModel.state.collectAsState()
     val target         by viewModel.target.collectAsState()
     val downloads      by viewModel.downloads.collectAsState()
+    val variants       by viewModel.variants.collectAsState()
+    val selectedRomId  by viewModel.romId.collectAsState()
+    val refreshing     by viewModel.refreshing.collectAsState()
+    val onDevice       by viewModel.onDevice.collectAsState()
 
-    var showNoFolderDialog by remember { mutableStateOf(false) }
     val snackbarHostState = remember { SnackbarHostState() }
 
     LaunchedEffect(Unit) {
-        viewModel.messages.collect { snackbarHostState.showSnackbar(it) }
+        viewModel.messages.collect { message ->
+            val result = snackbarHostState.showSnackbar(
+                message     = message.text,
+                actionLabel = if (message.undoIds.isNotEmpty()) "Undo" else null,
+                duration    = SnackbarDuration.Short,
+            )
+            if (result == SnackbarResult.ActionPerformed) viewModel.undo(message.undoIds)
+        }
     }
 
     Scaffold(
@@ -206,186 +309,277 @@ fun RomDetailScreen(
             }
             is RomDetailState.Loaded -> {
                 val rom = s.rom
-                LazyColumn(
-                    Modifier.fillMaxSize().padding(padding),
-                    contentPadding = PaddingValues(bottom = 24.dp),
-                ) {
-                    // Cover art
-                    item {
-                        val coverUrl = viewModel.coverUrl(rom)
-                        if (coverUrl != null) {
-                            AsyncImage(
-                                model              = coverUrl,
-                                contentDescription = rom.name,
-                                contentScale       = ContentScale.Fit,
-                                modifier           = Modifier
-                                    .fillMaxWidth()
-                                    .height(220.dp),
-                            )
-                        }
-                    }
-
-                    // Metadata
-                    item {
-                        Column(Modifier.padding(16.dp)) {
-                            Text(
-                                rom.name ?: rom.fsNameNoTags,
-                                style = MaterialTheme.typography.headlineSmall,
-                            )
-                            Spacer(Modifier.height(4.dp))
-                            Text(
-                                rom.platformDisplayName,
-                                style = MaterialTheme.typography.labelLarge,
-                                color = MaterialTheme.colorScheme.primary,
-                            )
-                            if (!rom.summary.isNullOrBlank()) {
-                                Spacer(Modifier.height(12.dp))
-                                Text(rom.summary, style = MaterialTheme.typography.bodyMedium)
-                            }
-                        }
-                    }
-
-                    // Folder status / warning
-                    item {
-                        if (target == null) {
-                            Card(
-                                colors   = CardDefaults.cardColors(
-                                    containerColor = MaterialTheme.colorScheme.errorContainer
-                                ),
-                                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
-                            ) {
-                                Row(
-                                    Modifier.padding(12.dp),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                ) {
-                                    Icon(Icons.Default.FolderOpen, contentDescription = null)
-                                    Spacer(Modifier.width(8.dp))
-                                    Text(
-                                        "No ROMs folder set. Go to Settings → Folder Mapping " +
-                                            "and choose your ROMs directory.",
-                                        style = MaterialTheme.typography.bodySmall,
-                                    )
-                                }
-                            }
-                            Spacer(Modifier.height(8.dp))
-                        } else {
-                            Text(
-                                "Downloads to: ${target!!.displayPath}",
-                                style    = MaterialTheme.typography.labelSmall,
-                                modifier = Modifier.padding(horizontal = 16.dp),
-                            )
-                            Spacer(Modifier.height(8.dp))
-                        }
-                    }
-
-                    // File list
-                    item {
-                        Text(
-                            "Files",
-                            style    = MaterialTheme.typography.titleMedium,
-                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
-                        )
-                    }
-                    items(rom.files) { file ->
-                        RomFileRow(
-                            file        = file,
-                            canDownload = target != null,
-                            workInfo    = downloads[file.id],
-                            onDownload  = {
-                                val ok = viewModel.downloadFile(file)
-                                if (!ok) showNoFolderDialog = true
-                            }
-                        )
-                        HorizontalDivider()
-                    }
-                    // If the API returned no files list, synthesize one from fs_name
-                    // so there is always something to download.
-                    if (rom.files.isEmpty()) {
+                Box(Modifier.fillMaxSize().padding(padding)) {
+                    LazyColumn(
+                        Modifier.fillMaxSize(),
+                        contentPadding = PaddingValues(bottom = 24.dp),
+                    ) {
+                        // Cover art
                         item {
-                            val syntheticFile = RomFileSchema(
-                                id            = 0,
-                                romId         = rom.id,
-                                fileName      = rom.fsName,
-                                fileSizeBytes = rom.fsSizeBytes,
-                            )
-                            RomFileRow(
-                                file        = syntheticFile,
-                                canDownload = target != null,
-                                workInfo    = downloads[syntheticFile.id],
-                                onDownload  = {
-                                    val ok = viewModel.downloadFile(syntheticFile)
-                                    if (!ok) showNoFolderDialog = true
-                                }
-                            )
+                            val coverUrl = viewModel.coverUrl(rom)
+                            if (coverUrl != null) {
+                                AsyncImage(
+                                    model              = coverUrl,
+                                    contentDescription = rom.name,
+                                    contentScale       = ContentScale.Fit,
+                                    modifier           = Modifier
+                                        .fillMaxWidth()
+                                        .height(220.dp),
+                                )
+                            }
                         }
+
+                        // Metadata
+                        item {
+                            Column(Modifier.padding(16.dp)) {
+                                Text(
+                                    rom.name ?: rom.fsNameNoTags,
+                                    style = MaterialTheme.typography.headlineSmall,
+                                )
+                                Spacer(Modifier.height(4.dp))
+                                Text(
+                                    rom.platformDisplayName,
+                                    style = MaterialTheme.typography.labelLarge,
+                                    color = MaterialTheme.colorScheme.primary,
+                                )
+                                if (!rom.summary.isNullOrBlank()) {
+                                    Spacer(Modifier.height(12.dp))
+                                    Text(rom.summary, style = MaterialTheme.typography.bodyMedium)
+                                }
+                            }
+                        }
+
+                        // Folder status / warning
+                        item {
+                            if (target == null) {
+                                Card(
+                                    colors   = CardDefaults.cardColors(
+                                        containerColor = MaterialTheme.colorScheme.errorContainer
+                                    ),
+                                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+                                ) {
+                                    Row(
+                                        Modifier.padding(12.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                    ) {
+                                        Icon(Icons.Default.FolderOpen, contentDescription = null)
+                                        Spacer(Modifier.width(8.dp))
+                                        Text(
+                                            "No ROMs folder set. Go to Settings → Folder Mapping " +
+                                                "and choose your ROMs directory.",
+                                            style = MaterialTheme.typography.bodySmall,
+                                        )
+                                    }
+                                }
+                                Spacer(Modifier.height(8.dp))
+                            } else {
+                                Text(
+                                    "Downloads to: ${target!!.displayPath}",
+                                    style    = MaterialTheme.typography.labelSmall,
+                                    modifier = Modifier.padding(horizontal = 16.dp),
+                                )
+                                Spacer(Modifier.height(8.dp))
+                            }
+                        }
+
+                        // Regional variants.  Only shown when there is a real
+                        // choice to make — a one-copy game gets no extra chrome.
+                        if (variants.size > 1) {
+                            item {
+                                Text(
+                                    "Versions",
+                                    style    = MaterialTheme.typography.titleMedium,
+                                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                                )
+                            }
+                            // Prefixed keys: variants are keyed by ROM id and
+                            // files by file id, and RomM hands out both from
+                            // ranges that overlap — ROM 75's own file is also
+                            // id 75 — so a bare id crashed the list the moment
+                            // both rows were measured in the same pass.
+                            items(variants, key = { "variant-${it.id}" }) { variant ->
+                                RomVariantRow(
+                                    variant  = variant,
+                                    selected = variant.id == selectedRomId,
+                                    onDevice = onDevice.contains(variant.fsName),
+                                    onClick  = { viewModel.selectVariant(variant.id) },
+                                )
+                            }
+                            item { HorizontalDivider(Modifier.padding(vertical = 8.dp)) }
+                        }
+
+                        // File list. The API omits it for simple single-file
+                        // ROMs, so one is synthesised from fs_name — otherwise
+                        // the commonest case of all has nothing to download.
+                        val files = rom.downloadableFiles()
+                        item {
+                            Row(
+                                Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment     = Alignment.CenterVertically,
+                            ) {
+                                Text("Files", style = MaterialTheme.typography.titleMedium)
+                                if (files.size > 1) {
+                                    TextButton(
+                                        onClick = { viewModel.downloadAll() },
+                                        enabled = target != null,
+                                    ) { Text("Download all") }
+                                }
+                            }
+                        }
+                        items(files, key = { "file-${it.id}" }) { file ->
+                            RomFileRow(
+                                file           = file,
+                                canDownload    = target != null,
+                                download       = downloads[file.id],
+                                onDeviceBytes  = onDevice.sizeOf(file.fileName),
+                                folderReadable = onDevice.readable,
+                                onDownload     = { viewModel.downloadFile(file) },
+                                onCancel       = { id -> viewModel.cancel(id) },
+                            )
+                            HorizontalDivider()
+                        }
+                    }
+                    if (refreshing) {
+                        LinearProgressIndicator(
+                            Modifier.fillMaxWidth().align(Alignment.TopCenter)
+                        )
                     }
                 }
             }
-        }
-
-        if (showNoFolderDialog) {
-            AlertDialog(
-                onDismissRequest = { showNoFolderDialog = false },
-                title = { Text("No folder configured") },
-                text  = { Text("Choose your ROMs folder in Settings → Folder Mapping.") },
-                confirmButton = {
-                    TextButton(onClick = { showNoFolderDialog = false }) { Text("OK") }
-                },
-            )
         }
     }
 }
 
 @Composable
+private fun RomVariantRow(
+    variant: RomVariant,
+    selected: Boolean,
+    onDevice: Boolean,
+    onClick: () -> Unit,
+) {
+    val flags = regionSummary(variant.regions)
+    // A size of 0 means the server never told us one, not a zero-byte ROM.
+    val detail = buildList {
+        variant.sizeBytes.takeIf { it > 0 }?.let { add(it.formatSize()) }
+        if (onDevice) add("On device")
+    }
+    ListItem(
+        modifier = Modifier.clickable(onClick = onClick),
+        // The filename, not the region, is the headline: two copies from the
+        // same region are told apart only by their "(Rev 1)" / "(Beta)" tags.
+        headlineContent   = { Text(variant.fsName) },
+        supportingContent = if (detail.isEmpty()) null else {
+            { Text(detail.joinToString("  ·  ")) }
+        },
+        leadingContent    = {
+            if (flags.isNotEmpty()) {
+                Text(flags, style = MaterialTheme.typography.titleMedium)
+            }
+        },
+        trailingContent   = {
+            RadioButton(selected = selected, onClick = onClick)
+        },
+        colors = if (selected) {
+            ListItemDefaults.colors(
+                containerColor = MaterialTheme.colorScheme.surfaceVariant
+            )
+        } else {
+            ListItemDefaults.colors()
+        },
+    )
+}
+
+/**
+ * One downloadable file.
+ *
+ * [onDeviceBytes] is the size the file has in the ROMs folder right now, or
+ * null when it is not there.  [folderReadable] says whether that null can be
+ * trusted: with a revoked SAF grant nothing can be read, and reporting every
+ * ROM as missing would be worse than saying nothing.
+ */
+@Composable
 private fun RomFileRow(
     file: RomFileSchema,
     canDownload: Boolean,
-    workInfo: WorkInfo?,
+    download: DownloadItem?,
+    onDeviceBytes: Long?,
+    folderReadable: Boolean,
     onDownload: () -> Unit,
+    onCancel: (String) -> Unit,
 ) {
-    val downloaded = workInfo?.progress?.getLong(DownloadWorker.PROGRESS_BYTES, 0L) ?: 0L
-    val total      = workInfo?.progress?.getLong(DownloadWorker.PROGRESS_TOTAL, 0L) ?: 0L
-
+    val present = onDeviceBytes != null
     Column {
         ListItem(
             headlineContent   = { Text(file.fileName) },
             supportingContent = {
                 // Surface what the download is actually doing. Previously a tap
                 // produced no visible change whether it worked or not.
-                when (workInfo?.state) {
-                    WorkInfo.State.ENQUEUED -> Text("Waiting for network…")
-                    WorkInfo.State.RUNNING  -> Text(
-                        if (total > 0) "${downloaded.formatSize()} / ${total.formatSize()}"
+                when (download?.status) {
+                    DownloadStatus.QUEUED  -> Text("Waiting…")
+                    DownloadStatus.RUNNING -> Text(
+                        if (download.totalBytes > 0)
+                            "${download.downloadedBytes.formatSize()} / ${download.totalBytes.formatSize()}"
                         else "Downloading…"
                     )
-                    WorkInfo.State.SUCCEEDED -> Text("Downloaded · ${file.fileSizeBytes.formatSize()}")
-                    WorkInfo.State.FAILED -> Text(
-                        workInfo.outputData.getString(DownloadWorker.KEY_ERROR)
-                            ?: "Download failed",
+                    DownloadStatus.FAILED -> Text(
+                        download.error ?: "Download failed",
                         color = MaterialTheme.colorScheme.error,
                     )
-                    WorkInfo.State.CANCELLED -> Text("Cancelled")
-                    else -> Text(file.fileSizeBytes.formatSize())
+                    // Nothing in flight, so what matters is whether the file is
+                    // actually sitting in the folder — which outranks whatever
+                    // the queue remembers, because the user can delete it.
+                    else -> when {
+                        onDeviceBytes != null ->
+                            Text("On device  ·  ${onDeviceBytes.formatSize()}")
+                        download?.status == DownloadStatus.SUCCEEDED && folderReadable ->
+                            Text(
+                                "Downloaded, but no longer in the folder",
+                                color = MaterialTheme.colorScheme.error,
+                            )
+                        download?.status == DownloadStatus.SUCCEEDED ->
+                            Text("Downloaded  ·  ${file.fileSizeBytes.formatSize()}")
+                        download?.status == DownloadStatus.CANCELLED -> Text("Cancelled")
+                        else -> Text(file.fileSizeBytes.formatSize())
+                    }
+                }
+            },
+            leadingContent = if (!present) null else {
+                {
+                    Icon(
+                        imageVector        = Icons.Default.CheckCircle,
+                        contentDescription = "Already on device",
+                        tint               = MaterialTheme.colorScheme.primary,
+                    )
                 }
             },
             trailingContent   = {
-                IconButton(
-                    onClick = onDownload,
-                    enabled = canDownload && workInfo?.state?.isFinished != false,
-                ) {
-                    Icon(
-                        imageVector        = Icons.Default.Download,
-                        contentDescription = "Download ${file.fileName}",
-                        tint = if (canDownload) MaterialTheme.colorScheme.primary
-                               else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f),
-                    )
+                val running = download?.status?.isFinished == false
+                if (running) {
+                    IconButton(onClick = { onCancel(download.id) }) {
+                        Icon(
+                            imageVector        = Icons.Default.Close,
+                            contentDescription = "Cancel ${file.fileName}",
+                        )
+                    }
+                } else {
+                    IconButton(onClick = onDownload, enabled = canDownload) {
+                        Icon(
+                            imageVector        = Icons.Default.Download,
+                            contentDescription = if (present) "Download ${file.fileName} again"
+                                                 else "Download ${file.fileName}",
+                            tint = if (canDownload) MaterialTheme.colorScheme.primary
+                                   else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f),
+                        )
+                    }
                 }
             },
         )
-        if (workInfo?.state == WorkInfo.State.RUNNING) {
-            if (total > 0) {
+        if (download?.status == DownloadStatus.RUNNING) {
+            val progress = download.progress
+            if (progress != null) {
                 LinearProgressIndicator(
-                    progress = { downloaded.toFloat() / total.toFloat() },
+                    progress = { progress },
                     modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
                 )
             } else {
