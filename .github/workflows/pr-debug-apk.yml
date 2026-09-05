@@ -34,6 +34,23 @@ jobs:
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
 
+      # Gates the build below: a failing step aborts the job, so a PR with
+      # broken tests produces no APK to install. There are no instrumented
+      # tests, so this needs no emulator.
+      - name: Run unit tests
+        run: ./gradlew --no-daemon testDebugUnitTest
+
+      # Only useful when the step above failed; Gradle's HTML report says which
+      # assertion blew up without digging through the log.
+      - name: Upload test report
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: unit-test-report
+          path: app/build/reports/tests/testDebugUnitTest
+          if-no-files-found: ignore
+          retention-days: 14
+
       # No signing secrets here: the debug build type signs with the committed
       # app/debug.keystore, so this runs fine on PRs from forks. That key is
       # shared on purpose — see README-signing.md.

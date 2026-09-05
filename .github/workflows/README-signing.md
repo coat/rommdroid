@@ -50,9 +50,11 @@ after the build, so it can't end up inside an uploaded artifact.
 
 ## Debug APKs on pull requests
 
-`PR Debug APK` (`.github/workflows/pr-debug-apk.yml`) runs `assembleDebug` on
-every PR targeting `main` and attaches the APK to the run, kept for 14 days.
-Grab it from the run's **Artifacts** section to test a branch on a device.
+`PR Debug APK` (`.github/workflows/pr-debug-apk.yml`) runs `testDebugUnitTest`
+on every PR targeting `main`, then — only if the tests pass — `assembleDebug`,
+attaching the APK to the run for 14 days. Grab it from the run's **Artifacts**
+section to test a branch on a device. When the tests fail there's no APK, and
+Gradle's HTML report is uploaded as `unit-test-report` instead.
 
 It needs none of the secrets above — debug builds sign with the committed
 `app/debug.keystore` (below), so it also works on PRs from forks, where secrets
