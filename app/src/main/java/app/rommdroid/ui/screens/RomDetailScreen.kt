@@ -6,6 +6,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.ArrowForwardIos
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Download
@@ -15,6 +16,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
@@ -372,23 +374,43 @@ fun RomDetailScreen(
                                     ),
                                     modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
                                 ) {
-                                    Column(Modifier.padding(12.dp)) {
-                                        Row(verticalAlignment = Alignment.CenterVertically) {
-                                            Icon(Icons.Default.FolderOpen, contentDescription = null)
-                                            Spacer(Modifier.width(8.dp))
-                                            Text(
-                                                "No ROMs folder set. Downloads stay disabled " +
-                                                    "until you choose one.",
-                                                style = MaterialTheme.typography.bodySmall,
-                                            )
-                                        }
-                                        TextButton(
-                                            onClick  = onFolderSettings,
-                                            colors   = ButtonDefaults.textButtonColors(
-                                                contentColor = MaterialTheme.colorScheme.onErrorContainer
-                                            ),
-                                            modifier = Modifier.align(Alignment.End),
-                                        ) { Text("Set ROMs folder") }
+                                    // One line, whatever the screen width: the
+                                    // card is the button, so the label carries
+                                    // no more than it has to and the chevron
+                                    // says where tapping goes.
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        modifier = Modifier.padding(
+                                            horizontal = 12.dp,
+                                            vertical   = 10.dp,
+                                        ),
+                                    ) {
+                                        Icon(
+                                            Icons.Default.FolderOpen,
+                                            contentDescription = null,
+                                            modifier = Modifier.size(20.dp),
+                                        )
+                                        Spacer(Modifier.width(12.dp))
+                                        Text(
+                                            "No ROMs folder set",
+                                            style    = MaterialTheme.typography.bodyMedium,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis,
+                                            modifier = Modifier.weight(1f),
+                                        )
+                                        Spacer(Modifier.width(8.dp))
+                                        Text(
+                                            "Set folder",
+                                            style    = MaterialTheme.typography.labelLarge,
+                                            maxLines = 1,
+                                        )
+                                        Icon(
+                                            Icons.AutoMirrored.Filled.ArrowForwardIos,
+                                            contentDescription = null,
+                                            modifier = Modifier
+                                                .padding(start = 6.dp)
+                                                .size(14.dp),
+                                        )
                                     }
                                 }
                                 Spacer(Modifier.height(8.dp))
