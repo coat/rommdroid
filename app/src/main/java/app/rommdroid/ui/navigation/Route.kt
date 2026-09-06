@@ -23,7 +23,6 @@ sealed class Route(val path: String) {
     }
     data object Downloads     : Route("downloads")
     data object Settings      : Route("settings")
-    data object Connection    : Route("settings/connection")
     data object FolderMapping : Route("settings/folders")
     data object Search        : Route("search")
 }
