@@ -107,7 +107,6 @@ fun RomMDroidNavHost() {
         composable(Route.Settings.path) {
             SettingsScreen(
                 viewModel        = hiltViewModel(),
-                onEditConnection = { navController.navigate(Route.Connection.path) },
                 onFolderMapping  = { navController.navigate(Route.FolderMapping.path) },
                 onResetSetup     = {
                     // Wipes back stack and returns to setup so the user can
@@ -117,14 +116,6 @@ fun RomMDroidNavHost() {
                     }
                 },
                 onBack           = { navController.popBackStack() },
-            )
-        }
-
-        composable(Route.Connection.path) {
-            ConnectionScreen(
-                viewModel = hiltViewModel(),
-                onSaved   = { navController.popBackStack() },
-                onBack    = { navController.popBackStack() },
             )
         }
 

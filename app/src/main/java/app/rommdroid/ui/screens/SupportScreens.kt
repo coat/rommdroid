@@ -10,12 +10,15 @@ import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
@@ -46,6 +49,8 @@ import app.rommdroid.data.repository.CredentialRepository
 import app.rommdroid.data.repository.DownloadTarget
 import app.rommdroid.data.repository.DownloadTargetRepository
 import app.rommdroid.data.repository.RomRepository
+import app.rommdroid.data.repository.ServerConnector
+import app.rommdroid.ui.components.InputKind
 import app.rommdroid.ui.components.OutlinedInputField
 import app.rommdroid.ui.components.rememberInputFieldHandle
 import app.rommdroid.util.RomGroup
@@ -417,21 +422,120 @@ private fun DownloadItem.statusLine(): String = when (status) {
 // Settings
 // ─────────────────────────────────────────────────────────────────────────────
 
+/**
+ * Where a change to the server address or the account has got to.
+ *
+ * Distinct from [SetupState] because saving here does not leave the screen:
+ * [Saved] is a confirmation the user reads in place, not a signal to navigate.
+ */
+sealed interface ConnectionState {
+    data object Idle : ConnectionState
+    data object Loading : ConnectionState
+    data class Error(val message: String) : ConnectionState
+    data object Saved : ConnectionState
+}
+
+/**
+ * Settings, including the server address and account the app is signed in with.
+ *
+ * The stored password is thrown away once setup has traded it for a client API
+ * token, so there is nothing to pre-fill the password field with and nothing to
+ * compare a new one against.  That splits the save into two cases: a server
+ * address that moved keeps the token and only re-verifies, while a different
+ * account — or a password that has since changed on the server — has to sign in
+ * again for a fresh token.
+ */
 @HiltViewModel
 class SettingsViewModel @Inject constructor(
     private val credentials: CredentialRepository,
+    private val connector: ServerConnector,
 ) : ViewModel() {
+
+    private val _savedServerUrl = MutableStateFlow(credentials.serverUrl.orEmpty())
     /**
-     * Read on every composition rather than cached, so editing the connection
-     * and coming back shows what was saved — EncryptedSharedPreferences has no
-     * change stream to observe, and the read is a cheap one.
+     * What is stored right now.  It seeds the field, and the field is compared
+     * against it to decide whether there is anything to save — so it is re-read
+     * after every save, which also replaces what was typed with the normalized
+     * form that was actually written.
      */
-    val serverUrl: String get() = credentials.serverUrl?.takeIf { it.isNotBlank() } ?: "(not set)"
-    val username: String  get() = credentials.username?.takeIf { it.isNotBlank() }  ?: "(not set)"
+    val savedServerUrl: StateFlow<String> = _savedServerUrl.asStateFlow()
+
+    private val _savedUsername = MutableStateFlow(credentials.username.orEmpty())
+    val savedUsername: StateFlow<String> = _savedUsername.asStateFlow()
+
+    private val _state = MutableStateFlow<ConnectionState>(ConnectionState.Idle)
+    val state: StateFlow<ConnectionState> = _state.asStateFlow()
+
+    private val _canSaveUnverified = MutableStateFlow(false)
+    /**
+     * True after an address-only save failed to reach the server.  A handheld is
+     * often nowhere near the server when its address is being corrected, so the
+     * new address can still be recorded — nothing else about the sign-in changes
+     * and the app will simply fail to sync until it is right.
+     */
+    val canSaveUnverified: StateFlow<Boolean> = _canSaveUnverified.asStateFlow()
+
+    fun save(serverUrl: String, username: String, password: String) {
+        val user = username.trim()
+        if (user.isBlank()) {
+            _state.value = ConnectionState.Error("Enter a username")
+            return
+        }
+        if (password.isBlank() && user != _savedUsername.value) {
+            _state.value =
+                ConnectionState.Error("Enter the password for $user to sign in as that account")
+            return
+        }
+
+        viewModelScope.launch {
+            _state.value = ConnectionState.Loading
+            // Same account means the token still stands and only the address
+            // moved; a password means signing in again for a fresh one.
+            val addressOnly = password.isBlank()
+            val result = if (addressOnly) {
+                connector.moveTo(serverUrl)
+            } else {
+                connector.signIn(serverUrl, user, password)
+            }
+            _canSaveUnverified.value = addressOnly && result.isFailure
+            _state.value = result.fold(
+                onSuccess = { saved() },
+                onFailure = { ConnectionState.Error(it.message ?: "Connection failed") },
+            )
+        }
+    }
+
+    /** Takes the address as typed, having offered [canSaveUnverified]. */
+    fun saveWithoutVerifying(serverUrl: String) {
+        _state.value = connector.setServerUrl(serverUrl).fold(
+            onSuccess = { saved() },
+            onFailure = { ConnectionState.Error(it.message ?: "That is not a URL") },
+        )
+    }
+
+    /**
+     * Clears a stale error once the user starts fixing the offending field.
+     *
+     * Deliberately leaves [ConnectionState.Saved] standing.  A save rewrites the
+     * URL field with the normalized form that was stored, and that write goes
+     * back out through the field's onValueChange the same way a keystroke does —
+     * clearing the state here would wipe the confirmation the save just earned.
+     * The screen hides it once there is something to save again instead.
+     */
+    fun clearError() {
+        if (_state.value is ConnectionState.Error) _state.value = ConnectionState.Idle
+        _canSaveUnverified.value = false
+    }
 
     /** Clears all stored credentials and server config. */
     fun disconnect() {
         credentials.clearAll()
+    }
+
+    private fun saved(): ConnectionState {
+        _savedServerUrl.value = credentials.serverUrl.orEmpty()
+        _savedUsername.value = credentials.username.orEmpty()
+        return ConnectionState.Saved
     }
 }
 
@@ -439,12 +543,45 @@ class SettingsViewModel @Inject constructor(
 @Composable
 fun SettingsScreen(
     viewModel: SettingsViewModel,
-    onEditConnection: () -> Unit,
     onFolderMapping: () -> Unit,
     onResetSetup: () -> Unit,
     onBack: () -> Unit,
 ) {
+    val state by viewModel.state.collectAsState()
+    val canSaveUnverified by viewModel.canSaveUnverified.collectAsState()
+    val savedServerUrl by viewModel.savedServerUrl.collectAsState()
+    val savedUsername by viewModel.savedUsername.collectAsState()
+
+    var serverUrl by rememberSaveable { mutableStateOf(savedServerUrl) }
+    var username  by rememberSaveable { mutableStateOf(savedUsername) }
+    var password  by rememberSaveable { mutableStateOf("") }
+
     var showDisconnectDialog by remember { mutableStateOf(false) }
+
+    // Every field ends in Done, which puts the keyboard away and returns to this
+    // screen.  Walking the fields with Next belongs to first-run setup: here the
+    // usual edit is one field, and in landscape the keyboard covers the app, so
+    // its action key has to be a way out rather than a way further in.
+    val save = { viewModel.save(serverUrl, username, password) }
+    val dirty = serverUrl.trim() != savedServerUrl ||
+        username.trim() != savedUsername ||
+        password.isNotEmpty()
+    val editable = state != ConnectionState.Loading
+
+    val scrollState = rememberScrollState()
+
+    LaunchedEffect(state) {
+        // A save normalizes the URL before storing it, so show what was stored
+        // rather than what was typed — otherwise the field reads as unsaved.
+        if (state == ConnectionState.Saved) {
+            serverUrl = savedServerUrl
+            username  = savedUsername
+            password  = ""
+        }
+        // The error, and the fallback it can offer, land below the button that
+        // was just tapped — on a short screen that is off the bottom edge.
+        if (state is ConnectionState.Error) scrollState.animateScrollTo(scrollState.maxValue)
+    }
 
     Scaffold(
         topBar = {
@@ -458,60 +595,147 @@ fun SettingsScreen(
             )
         }
     ) { padding ->
-        LazyColumn(Modifier.fillMaxSize().padding(padding)) {
-            item {
-                ListItem(
-                    modifier          = Modifier.clickable(onClick = onEditConnection),
-                    headlineContent   = { Text("Server") },
-                    supportingContent = { Text(viewModel.serverUrl) },
-                    leadingContent    = { Icon(Icons.Default.Dns, null) },
-                    trailingContent   = { Icon(Icons.AutoMirrored.Filled.ArrowForward, null) },
+        // A plain scrolling Column, not a LazyColumn: the page is a handful of
+        // items, and a lazy list is the container these fields cannot live in
+        // (see the focusSearch note in OutlinedInputField).
+        Column(
+            Modifier
+                .fillMaxSize()
+                .padding(padding)
+                .verticalScroll(scrollState),
+        ) {
+            Text(
+                text     = "Server & account",
+                style    = MaterialTheme.typography.titleSmall,
+                color    = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 16.dp),
+            )
+
+            Column(Modifier.padding(16.dp)) {
+                OutlinedInputField(
+                    value         = serverUrl,
+                    onValueChange = { serverUrl = it; viewModel.clearError() },
+                    label         = "Server URL",
+                    placeholder   = "http://romm.local",
+                    inputKind     = InputKind.Uri,
+                    enabled       = editable,
+                    imeAction     = EditorInfo.IME_ACTION_DONE,
+                    modifier      = Modifier.fillMaxWidth(),
                 )
-                HorizontalDivider()
-            }
-            item {
-                ListItem(
-                    modifier          = Modifier.clickable(onClick = onEditConnection),
-                    headlineContent   = { Text("Account") },
-                    supportingContent = { Text(viewModel.username) },
-                    leadingContent    = { Icon(Icons.Default.Person, null) },
-                    trailingContent   = { Icon(Icons.AutoMirrored.Filled.ArrowForward, null) },
+
+                Spacer(Modifier.height(12.dp))
+
+                OutlinedInputField(
+                    value         = username,
+                    onValueChange = { username = it; viewModel.clearError() },
+                    label         = "Username",
+                    enabled       = editable,
+                    imeAction     = EditorInfo.IME_ACTION_DONE,
+                    modifier      = Modifier.fillMaxWidth(),
                 )
-                HorizontalDivider()
-            }
-            item {
-                ListItem(
-                    modifier          = Modifier.clickable(onClick = onFolderMapping),
-                    headlineContent   = { Text("Folder Mapping") },
-                    supportingContent = { Text("Set your ROMs folder and per-platform overrides") },
-                    leadingContent    = { Icon(Icons.Default.FolderOpen, null) },
-                    trailingContent   = { Icon(Icons.AutoMirrored.Filled.ArrowForward, null) },
+
+                Spacer(Modifier.height(12.dp))
+
+                OutlinedInputField(
+                    value          = password,
+                    onValueChange  = { password = it; viewModel.clearError() },
+                    label          = "Password",
+                    inputKind      = InputKind.Password,
+                    enabled        = editable,
+                    imeAction      = EditorInfo.IME_ACTION_DONE,
+                    supportingText = {
+                        Text("Only needed to switch account or after a password change.")
+                    },
+                    modifier       = Modifier.fillMaxWidth(),
                 )
-                HorizontalDivider()
-            }
-            item {
-                Spacer(Modifier.height(16.dp))
-            }
-            item {
-                ListItem(
-                    modifier = Modifier.clickable { showDisconnectDialog = true },
-                    headlineContent = {
+
+                when (val current = state) {
+                    is ConnectionState.Error -> {
+                        Spacer(Modifier.height(8.dp))
                         Text(
-                            "Disconnect / Change server",
+                            text  = current.message,
                             color = MaterialTheme.colorScheme.error,
+                            style = MaterialTheme.typography.bodySmall,
                         )
-                    },
-                    supportingContent = { Text("Clear credentials and return to setup") },
-                    leadingContent    = {
-                        Icon(
-                            Icons.Default.LinkOff,
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.error,
+                    }
+                    // Only while it is still true — the moment a field differs
+                    // from what is stored, there is something to save again.
+                    ConnectionState.Saved -> if (!dirty) {
+                        Spacer(Modifier.height(8.dp))
+                        Text(
+                            text  = "Saved.",
+                            color = MaterialTheme.colorScheme.primary,
+                            style = MaterialTheme.typography.bodySmall,
                         )
-                    },
+                    }
+                    else -> Unit
+                }
+
+                Spacer(Modifier.height(16.dp))
+
+                Button(
+                    onClick  = save,
+                    enabled  = dirty && editable,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    if (state == ConnectionState.Loading) {
+                        CircularProgressIndicator(
+                            modifier    = Modifier.size(20.dp),
+                            strokeWidth = 2.dp,
+                        )
+                    } else {
+                        Text("Save")
+                    }
+                }
+
+                if (canSaveUnverified && state is ConnectionState.Error) {
+                    TextButton(
+                        onClick  = { viewModel.saveWithoutVerifying(serverUrl) },
+                        modifier = Modifier.align(Alignment.CenterHorizontally),
+                    ) { Text("Save address anyway") }
+                }
+
+                Spacer(Modifier.height(8.dp))
+
+                Text(
+                    text  = "Verified before saving — if it fails, the current connection " +
+                            "is kept. Downloads and folder mappings are unaffected.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
-                HorizontalDivider()
             }
+
+            HorizontalDivider()
+
+            ListItem(
+                modifier          = Modifier.clickable(onClick = onFolderMapping),
+                headlineContent   = { Text("Folder Mapping") },
+                supportingContent = { Text("Set your ROMs folder and per-platform overrides") },
+                leadingContent    = { Icon(Icons.Default.FolderOpen, null) },
+                trailingContent   = { Icon(Icons.AutoMirrored.Filled.ArrowForward, null) },
+            )
+            HorizontalDivider()
+
+            Spacer(Modifier.height(16.dp))
+
+            ListItem(
+                modifier = Modifier.clickable { showDisconnectDialog = true },
+                headlineContent = {
+                    Text(
+                        "Disconnect / Change server",
+                        color = MaterialTheme.colorScheme.error,
+                    )
+                },
+                supportingContent = { Text("Clear credentials and return to setup") },
+                leadingContent    = {
+                    Icon(
+                        Icons.Default.LinkOff,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.error,
+                    )
+                },
+            )
+            HorizontalDivider()
         }
     }
 
