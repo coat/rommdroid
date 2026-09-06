@@ -59,7 +59,7 @@ import app.rommdroid.ui.components.RestoreFocus
 import app.rommdroid.ui.components.StickScroll
 import app.rommdroid.ui.components.focusOutline
 import app.rommdroid.ui.components.gamepadRow
-import app.rommdroid.ui.components.rememberHasGamepad
+import app.rommdroid.ui.components.rememberButtonLayout
 import app.rommdroid.ui.components.rememberInputFieldHandle
 import app.rommdroid.ui.components.scrollPage
 import app.rommdroid.ui.components.withButton
@@ -299,7 +299,7 @@ fun RomListScreen(
 
     val snackbarHostState = remember { SnackbarHostState() }
     val haptics = LocalHapticFeedback.current
-    val hasGamepad = rememberHasGamepad()
+    val buttons = rememberButtonLayout()
 
     // The filter field replaces the title rather than sitting under it: on a
     // handheld in landscape the bar plus a second row of chrome is most of the
@@ -451,17 +451,17 @@ fun RomListScreen(
 
     // Sync failures share the queue's snackbar host rather than stacking a
     // second one on top of it.
-    LaunchedEffect(error, hasGamepad) {
+    LaunchedEffect(error, buttons) {
         val message = error ?: return@LaunchedEffect
         val result = snackbarHostState.showSnackbar(
             message     = message,
-            actionLabel = "Retry".withButton(GamepadButton.Y, hasGamepad),
+            actionLabel = "Retry".withButton(GamepadButton.Y, buttons),
             duration    = SnackbarDuration.Long,
         )
         if (result == SnackbarResult.ActionPerformed) viewModel.refresh()
     }
 
-    LaunchedEffect(hasGamepad) {
+    LaunchedEffect(buttons) {
         viewModel.messages.collect { message ->
             val action = when {
                 message.undoIds.isNotEmpty() -> "Undo"
@@ -470,7 +470,7 @@ fun RomListScreen(
             }
             val result = snackbarHostState.showSnackbar(
                 message     = message.text,
-                actionLabel = action.withButton(GamepadButton.Y, hasGamepad),
+                actionLabel = action.withButton(GamepadButton.Y, buttons),
                 duration    = SnackbarDuration.Short,
             )
             if (result == SnackbarResult.ActionPerformed) {

@@ -31,6 +31,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.Stable
+import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -55,6 +56,7 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.unit.dp
+import app.rommdroid.data.repository.GamepadLayout
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
 import kotlin.math.abs
@@ -318,14 +320,55 @@ private fun gamepadAttached(): Boolean = InputDevice.getDeviceIds().any { id ->
 
 // ── Hints ─────────────────────────────────────────────────────────────────────
 
-/** A button as the bar draws it; the glyph is what the device prints on itself. */
-enum class GamepadButton(val glyph: String) {
-    A("A"), B("B"), X("X"), Y("Y"),
+/**
+ * A button as the bar draws it.
+ *
+ * Named for the keycode it arrives on, which Android names the Xbox way, and
+ * printed as whichever lettering the user said their handheld uses — the same
+ * four positions carry different letters on a Nintendo-style pad, and a hint
+ * that names a letter the device does not print there is worse than no hint.
+ * The shoulders and the two small ones are the same on both, so they carry one
+ * glyph.  See [GamepadLayout].
+ */
+enum class GamepadButton(private val xbox: String, private val nintendo: String = xbox) {
+    /** Bottom. */ A("A", "B"),
+    /** Right.  */ B("B", "A"),
+    /** Left.   */ X("X", "Y"),
+    /** Top.    */ Y("Y", "X"),
     L1("L1"), R1("R1"), L2("L2"), R2("R2"),
-    Select("Sel"), Start("Start"),
+    Select("Sel"), Start("Start");
+
+    fun glyph(layout: GamepadLayout): String = when (layout) {
+        GamepadLayout.Xbox     -> xbox
+        GamepadLayout.Nintendo -> nintendo
+    }
 }
 
 data class GamepadHint(val button: GamepadButton, val label: String)
+
+/**
+ * The lettering in force, set once at the top of the app from the stored
+ * preference.
+ *
+ * Not `staticCompositionLocalOf`: this one changes while the app is running —
+ * the moment the user picks the other style in settings — and only the hints
+ * that read it need to repaint.
+ */
+val LocalGamepadLayout = compositionLocalOf { GamepadLayout.Xbox }
+
+/**
+ * The lettering to print a button in, or null when there is no controller and
+ * so nothing to name.
+ *
+ * The two questions come as one because every caller asks both: a screen either
+ * names its buttons in the user's lettering or does not name them at all.
+ */
+@Composable
+fun rememberButtonLayout(): GamepadLayout? {
+    val layout   = LocalGamepadLayout.current
+    val attached = rememberHasGamepad()
+    return if (attached) layout else null
+}
 
 /**
  * A snackbar action, named with the button that performs it.
@@ -336,8 +379,8 @@ data class GamepadHint(val button: GamepadButton, val label: String)
  * so.  Without the button in the text there is nothing to tell the user the
  * offer is theirs to take.
  */
-fun String?.withButton(button: GamepadButton, show: Boolean): String? =
-    if (this != null && show) "${button.glyph}  ·  $this" else this
+fun String?.withButton(button: GamepadButton, layout: GamepadLayout?): String? =
+    if (this != null && layout != null) "${button.glyph(layout)}  ·  $this" else this
 
 /**
  * The legend along the bottom of a screen.
@@ -391,7 +434,8 @@ fun GamepadHintBar(hints: List<GamepadHint>, modifier: Modifier = Modifier) {
  */
 @Composable
 private fun ButtonGlyph(button: GamepadButton) {
-    val round = button.glyph.length == 1
+    val glyph = button.glyph(LocalGamepadLayout.current)
+    val round = glyph.length == 1
     Box(
         contentAlignment = Alignment.Center,
         modifier = Modifier
@@ -401,7 +445,7 @@ private fun ButtonGlyph(button: GamepadButton) {
             .then(if (round) Modifier else Modifier.padding(horizontal = 4.dp, vertical = 1.dp)),
     ) {
         Text(
-            text  = button.glyph,
+            text  = glyph,
             style = MaterialTheme.typography.labelSmall,
             color = MaterialTheme.colorScheme.onSurface,
         )

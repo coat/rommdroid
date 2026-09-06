@@ -55,7 +55,7 @@ import app.rommdroid.ui.components.RestoreFocus
 import app.rommdroid.ui.components.StickScroll
 import app.rommdroid.ui.components.focusOutline
 import app.rommdroid.ui.components.gamepadRow
-import app.rommdroid.ui.components.rememberHasGamepad
+import app.rommdroid.ui.components.rememberButtonLayout
 import app.rommdroid.ui.components.scrollPage
 import app.rommdroid.ui.components.withButton
 import app.rommdroid.ui.navigation.Route
@@ -319,8 +319,8 @@ fun RomDetailScreen(
     }
     StickScroll(listState)
 
-    val hasGamepad = rememberHasGamepad()
-    LaunchedEffect(hasGamepad) {
+    val buttons = rememberButtonLayout()
+    LaunchedEffect(buttons) {
         viewModel.messages.collect { message ->
             val action = when {
                 message.undoIds.isNotEmpty() -> "Undo"
@@ -329,7 +329,7 @@ fun RomDetailScreen(
             }
             val result = snackbarHostState.showSnackbar(
                 message     = message.text,
-                actionLabel = action.withButton(GamepadButton.Y, hasGamepad),
+                actionLabel = action.withButton(GamepadButton.Y, buttons),
                 duration    = SnackbarDuration.Short,
             )
             if (result == SnackbarResult.ActionPerformed) {
