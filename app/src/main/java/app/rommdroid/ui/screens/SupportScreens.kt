@@ -5,11 +5,11 @@ import android.view.inputmethod.EditorInfo
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.ExperimentalFoundationApi
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.gestures.animateScrollBy
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -47,9 +47,20 @@ import app.rommdroid.data.repository.DownloadTarget
 import app.rommdroid.data.repository.DownloadTargetRepository
 import app.rommdroid.data.repository.RomRepository
 import app.rommdroid.data.repository.ServerConnector
+import app.rommdroid.ui.components.GamepadAction
+import app.rommdroid.ui.components.GamepadButton
+import app.rommdroid.ui.components.GamepadHandler
+import app.rommdroid.ui.components.GamepadHint
+import app.rommdroid.ui.components.GamepadHintBar
 import app.rommdroid.ui.components.InputKind
 import app.rommdroid.ui.components.OutlinedInputField
+import app.rommdroid.ui.components.StickScroll
+import app.rommdroid.ui.components.focusOutline
+import app.rommdroid.ui.components.gamepadRow
+import app.rommdroid.ui.components.rememberHasGamepad
 import app.rommdroid.ui.components.rememberInputFieldHandle
+import app.rommdroid.ui.components.scrollPage
+import app.rommdroid.ui.components.withButton
 import app.rommdroid.util.RomGroup
 import app.rommdroid.util.formatSize
 import app.rommdroid.util.groupRoms
@@ -140,16 +151,64 @@ fun SearchScreen(
     val snackbarHostState = remember { SnackbarHostState() }
     val haptics = LocalHapticFeedback.current
     val queryField = rememberInputFieldHandle()
+    val listState = rememberLazyListState()
+    val scope     = rememberCoroutineScope()
 
+    // The row a controller is on, so X can queue it.  Nothing restores focus
+    // here the way the ROM list does: this screen opens on an empty query, and
+    // what it opens for is the typing.
+    var focusedKey by remember { mutableStateOf<String?>(null) }
+    val focusedGroup = results.firstOrNull { it.key == focusedKey }
+
+    GamepadHandler { action ->
+        when (action) {
+            GamepadAction.Search -> {
+                // A snackbar cannot be tapped with a controller, so while one is
+                // offering something Y takes the offer; the label names the
+                // button.  Otherwise Y goes back to the field, which is where
+                // this screen starts and the one place the buttons cannot
+                // otherwise reach once focus is down in the results.
+                val offer = snackbarHostState.currentSnackbarData
+                    ?.takeIf { it.visuals.actionLabel != null }
+                if (offer != null) offer.performAction() else queryField.requestFocus()
+                true
+            }
+            GamepadAction.Download -> {
+                focusedGroup?.let {
+                    haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                    viewModel.download(it)
+                }
+                true
+            }
+            GamepadAction.PageUp   -> { scope.launch { listState.scrollPage(-1) }; true }
+            GamepadAction.PageDown -> { scope.launch { listState.scrollPage(1) }; true }
+            else                   -> false
+        }
+    }
+    StickScroll(listState)
+
+    // Opening search is asking to type, and on a controller there is no way to
+    // tap into the field — so it takes focus itself, one frame in, once the
+    // view behind it is attached to the window.  Only on a fresh query: coming
+    // back from a ROM should not reopen the keyboard over the results.
     LaunchedEffect(Unit) {
+        if (query.isEmpty()) {
+            withFrameNanos { }
+            queryField.requestFocus()
+        }
+    }
+
+    val hasGamepad = rememberHasGamepad()
+    LaunchedEffect(hasGamepad) {
         viewModel.messages.collect { message ->
+            val action = when {
+                message.undoIds.isNotEmpty() -> "Undo"
+                message.needsFolder          -> "Set folder"
+                else                         -> null
+            }
             val result = snackbarHostState.showSnackbar(
                 message     = message.text,
-                actionLabel = when {
-                    message.undoIds.isNotEmpty() -> "Undo"
-                    message.needsFolder          -> "Set folder"
-                    else                         -> null
-                },
+                actionLabel = action.withButton(GamepadButton.Y, hasGamepad),
                 duration    = SnackbarDuration.Short,
             )
             if (result == SnackbarResult.ActionPerformed) {
@@ -181,14 +240,24 @@ fun SearchScreen(
                     )
                 },
                 navigationIcon = {
-                    IconButton(onClick = onBack) {
+                    IconButton(onClick = onBack, modifier = Modifier.focusOutline()) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back")
                     }
                 },
             )
-        }
+        },
+        bottomBar = {
+            GamepadHintBar(
+                listOf(
+                    GamepadHint(GamepadButton.A, "Open"),
+                    GamepadHint(GamepadButton.X, "Download"),
+                    GamepadHint(GamepadButton.Y, "Search box"),
+                    GamepadHint(GamepadButton.B, "Back"),
+                )
+            )
+        },
     ) { padding ->
-        LazyColumn(Modifier.fillMaxSize().padding(padding)) {
+        LazyColumn(state = listState, modifier = Modifier.fillMaxSize().padding(padding)) {
             if (offline) {
                 item {
                     ListItem(
@@ -204,13 +273,14 @@ fun SearchScreen(
             items(results, key = { it.key }) { group ->
                 val rom = group.primary
                 ListItem(
-                    modifier = Modifier.combinedClickable(
+                    modifier = Modifier.gamepadRow(
                         onClick          = { onRomClick(rom.id) },
                         onLongClick      = {
                             haptics.performHapticFeedback(HapticFeedbackType.LongPress)
                             viewModel.download(group)
                         },
                         onLongClickLabel = "Download",
+                        onFocused        = { focusedKey = group.key },
                     ),
                     headlineContent   = { Text(rom.name ?: rom.fsNameNoTags) },
                     supportingContent = {
@@ -265,22 +335,64 @@ fun DownloadsScreen(
     val items by viewModel.items.collectAsState()
     val (active, finished) = items.partition { !it.status.isFinished }
 
+    val listState = rememberLazyListState()
+    val scope     = rememberCoroutineScope()
+
+    // X is the row's own trailing button, whichever one this row is showing:
+    // cancel while it runs, retry once it failed, remove once it is done.
+    var focusedId by remember { mutableStateOf<String?>(null) }
+    val focused = items.firstOrNull { it.id == focusedId }
+
+    GamepadHandler { action ->
+        when (action) {
+            GamepadAction.Download -> {
+                focused?.let {
+                    when (it.status) {
+                        DownloadStatus.QUEUED, DownloadStatus.RUNNING -> viewModel.cancel(it.id)
+                        DownloadStatus.FAILED, DownloadStatus.CANCELLED -> viewModel.retry(it.id)
+                        DownloadStatus.SUCCEEDED -> viewModel.remove(it.id)
+                    }
+                }
+                true
+            }
+            GamepadAction.PageUp   -> { scope.launch { listState.scrollPage(-1) }; true }
+            GamepadAction.PageDown -> { scope.launch { listState.scrollPage(1) }; true }
+            // Start opened this screen; pressing it again closes it rather than
+            // stacking a second copy on the back stack.
+            GamepadAction.Downloads -> { onBack(); true }
+            else                    -> false
+        }
+    }
+    StickScroll(listState)
+
     Scaffold(
         topBar = {
             TopAppBar(
                 title = { Text("Downloads") },
                 navigationIcon = {
-                    IconButton(onClick = onBack) {
+                    IconButton(onClick = onBack, modifier = Modifier.focusOutline()) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back")
                     }
                 },
                 actions = {
                     if (finished.isNotEmpty()) {
-                        TextButton(onClick = { viewModel.clearFinished() }) { Text("Clear") }
+                        TextButton(
+                            onClick  = { viewModel.clearFinished() },
+                            modifier = Modifier.focusOutline(),
+                        ) { Text("Clear") }
                     }
                 },
             )
-        }
+        },
+        bottomBar = {
+            GamepadHintBar(
+                listOf(
+                    GamepadHint(GamepadButton.A, "Open"),
+                    GamepadHint(GamepadButton.X, "Cancel / retry / remove"),
+                    GamepadHint(GamepadButton.B, "Back"),
+                )
+            )
+        },
     ) { padding ->
         if (items.isEmpty()) {
             Column(
@@ -298,7 +410,13 @@ fun DownloadsScreen(
                 Text("Nothing downloading", style = MaterialTheme.typography.titleMedium)
                 Spacer(Modifier.height(4.dp))
                 Text(
-                    "Long-press a game in any ROM list to add it here.",
+                    // The gesture and the button are the same action, and the
+                    // one the reader has no way to perform is not worth naming.
+                    if (rememberHasGamepad()) {
+                        "Press X on a game in any ROM list to add it here."
+                    } else {
+                        "Long-press a game in any ROM list to add it here."
+                    },
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -306,16 +424,17 @@ fun DownloadsScreen(
             return@Scaffold
         }
 
-        LazyColumn(Modifier.fillMaxSize().padding(padding)) {
+        LazyColumn(state = listState, modifier = Modifier.fillMaxSize().padding(padding)) {
             if (active.isNotEmpty()) {
                 item { QueueHeader("In progress · ${active.size}") }
                 items(active, key = { it.id }) { item ->
                     DownloadRow(
-                        item     = item,
-                        onClick  = { onRomClick(item.romId) },
-                        onCancel = { viewModel.cancel(item.id) },
-                        onRetry  = { viewModel.retry(item.id) },
-                        onRemove = { viewModel.remove(item.id) },
+                        item      = item,
+                        onClick   = { onRomClick(item.romId) },
+                        onCancel  = { viewModel.cancel(item.id) },
+                        onRetry   = { viewModel.retry(item.id) },
+                        onRemove  = { viewModel.remove(item.id) },
+                        onFocused = { focusedId = item.id },
                     )
                     HorizontalDivider()
                 }
@@ -324,11 +443,12 @@ fun DownloadsScreen(
                 item { QueueHeader("Finished") }
                 items(finished, key = { it.id }) { item ->
                     DownloadRow(
-                        item     = item,
-                        onClick  = { onRomClick(item.romId) },
-                        onCancel = { viewModel.cancel(item.id) },
-                        onRetry  = { viewModel.retry(item.id) },
-                        onRemove = { viewModel.remove(item.id) },
+                        item      = item,
+                        onClick   = { onRomClick(item.romId) },
+                        onCancel  = { viewModel.cancel(item.id) },
+                        onRetry   = { viewModel.retry(item.id) },
+                        onRemove  = { viewModel.remove(item.id) },
+                        onFocused = { focusedId = item.id },
                     )
                     HorizontalDivider()
                 }
@@ -354,8 +474,12 @@ private fun DownloadRow(
     onCancel: () -> Unit,
     onRetry: () -> Unit,
     onRemove: () -> Unit,
+    onFocused: () -> Unit,
 ) {
-    Column(Modifier.clickable(onClick = onClick)) {
+    // The whole row is the focus target, progress bar included: the trailing
+    // button is reachable as a second stop, but X on the row does the same
+    // thing without having to walk into it.
+    Column(Modifier.gamepadRow(onClick = onClick, onFocused = onFocused)) {
         ListItem(
             headlineContent   = { Text(item.fileName, maxLines = 2) },
             supportingContent = {
@@ -375,15 +499,15 @@ private fun DownloadRow(
                     // Cancelling is the only useful thing to do to a transfer
                     // that has not finished; everything else is after the fact.
                     DownloadStatus.QUEUED, DownloadStatus.RUNNING ->
-                        IconButton(onClick = onCancel) {
+                        IconButton(onClick = onCancel, modifier = Modifier.focusOutline()) {
                             Icon(Icons.Default.Close, contentDescription = "Cancel")
                         }
                     DownloadStatus.FAILED, DownloadStatus.CANCELLED ->
-                        IconButton(onClick = onRetry) {
+                        IconButton(onClick = onRetry, modifier = Modifier.focusOutline()) {
                             Icon(Icons.Default.Refresh, contentDescription = "Retry")
                         }
                     DownloadStatus.SUCCEEDED ->
-                        IconButton(onClick = onRemove) {
+                        IconButton(onClick = onRemove, modifier = Modifier.focusOutline()) {
                             Icon(Icons.Default.Close, contentDescription = "Remove from list")
                         }
                 }
@@ -607,17 +731,44 @@ fun SettingsScreen(
         if (state is ConnectionState.Error) scrollState.animateScrollTo(scrollState.maxValue)
     }
 
+    val scope = rememberCoroutineScope()
+    GamepadHandler { action ->
+        when (action) {
+            // The page is taller than the screen and its focusable stops are
+            // far apart, so the triggers move it rather than the focus.
+            GamepadAction.PageUp -> {
+                scope.launch { scrollState.animateScrollBy(-scrollState.viewportSize * 0.85f) }
+                true
+            }
+            GamepadAction.PageDown -> {
+                scope.launch { scrollState.animateScrollBy(scrollState.viewportSize * 0.85f) }
+                true
+            }
+            // Select opened this page; pressing it again closes it.
+            GamepadAction.Settings -> { onBack(); true }
+            else                   -> false
+        }
+    }
+
     Scaffold(
         topBar = {
             TopAppBar(
                 title = { Text("Settings") },
                 navigationIcon = {
-                    IconButton(onClick = onBack) {
+                    IconButton(onClick = onBack, modifier = Modifier.focusOutline()) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back")
                     }
                 },
             )
-        }
+        },
+        bottomBar = {
+            GamepadHintBar(
+                listOf(
+                    GamepadHint(GamepadButton.A, "Select"),
+                    GamepadHint(GamepadButton.B, "Back"),
+                )
+            )
+        },
     ) { padding ->
         // A plain scrolling Column, not a LazyColumn: the page is a handful of
         // items, and a lazy list is the container these fields cannot live in
@@ -732,7 +883,7 @@ fun SettingsScreen(
             HorizontalDivider()
 
             ListItem(
-                modifier          = Modifier.clickable(onClick = onFolderMapping),
+                modifier          = Modifier.gamepadRow(onClick = onFolderMapping),
                 headlineContent   = { Text("Folder Mapping") },
                 supportingContent = { Text("Set your ROMs folder and per-platform overrides") },
                 leadingContent    = { Icon(Icons.Default.FolderOpen, null) },
@@ -741,7 +892,7 @@ fun SettingsScreen(
             HorizontalDivider()
 
             ListItem(
-                modifier          = Modifier.clickable { showClearCacheDialog = true },
+                modifier          = Modifier.gamepadRow(onClick = { showClearCacheDialog = true }),
                 headlineContent   = { Text("Clear cached library") },
                 supportingContent = {
                     Text("Re-fetch platforms and ROMs from the server")
@@ -753,7 +904,7 @@ fun SettingsScreen(
             Spacer(Modifier.height(16.dp))
 
             ListItem(
-                modifier = Modifier.clickable { showDisconnectDialog = true },
+                modifier = Modifier.gamepadRow(onClick = { showDisconnectDialog = true }),
                 headlineContent = {
                     Text(
                         "Disconnect / Change server",
@@ -969,19 +1120,39 @@ fun FolderMappingScreen(
         pendingPlatformId.intValue = -1
     }
 
+    val listState = rememberLazyListState()
+    val scope     = rememberCoroutineScope()
+
+    GamepadHandler { action ->
+        when (action) {
+            GamepadAction.PageUp   -> { scope.launch { listState.scrollPage(-1) }; true }
+            GamepadAction.PageDown -> { scope.launch { listState.scrollPage(1) }; true }
+            else                   -> false
+        }
+    }
+    StickScroll(listState)
+
     Scaffold(
         topBar = {
             TopAppBar(
                 title = { Text("Folder Mapping") },
                 navigationIcon = {
-                    IconButton(onClick = onBack) {
+                    IconButton(onClick = onBack, modifier = Modifier.focusOutline()) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back")
                     }
                 },
             )
-        }
+        },
+        bottomBar = {
+            GamepadHintBar(
+                listOf(
+                    GamepadHint(GamepadButton.A, "Edit"),
+                    GamepadHint(GamepadButton.B, "Back"),
+                )
+            )
+        },
     ) { padding ->
-        LazyColumn(Modifier.fillMaxSize().padding(padding)) {
+        LazyColumn(state = listState, modifier = Modifier.fillMaxSize().padding(padding)) {
 
             // ── Base folder ──────────────────────────────────────────────────
             item {
@@ -1009,7 +1180,10 @@ fun FolderMappingScreen(
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                         Spacer(Modifier.height(12.dp))
-                        Button(onClick = { basePicker.launch(baseFolder?.folderUri?.let(Uri::parse)) }) {
+                        Button(
+                            onClick  = { basePicker.launch(baseFolder?.folderUri?.let(Uri::parse)) },
+                            modifier = Modifier.focusOutline(),
+                        ) {
                             Icon(Icons.Default.FolderOpen, contentDescription = null)
                             Spacer(Modifier.width(8.dp))
                             Text(if (baseFolder == null) "Choose ROMs folder" else "Change")
@@ -1029,7 +1203,7 @@ fun FolderMappingScreen(
             items(rows, key = { it.platform.id }) { row ->
                 val target = row.target
                 ListItem(
-                    modifier = Modifier.clickable { editing = row },
+                    modifier = Modifier.gamepadRow(onClick = { editing = row }),
                     headlineContent   = { Text(row.platform.displayName) },
                     supportingContent = {
                         Text(

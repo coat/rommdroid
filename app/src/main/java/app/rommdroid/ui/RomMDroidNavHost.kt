@@ -1,12 +1,16 @@
 package app.rommdroid.ui
 
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
+import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
+import app.rommdroid.ui.components.GamepadAction
+import app.rommdroid.ui.components.GamepadHandler
 import app.rommdroid.ui.navigation.Route
 import app.rommdroid.ui.screens.*
 
@@ -22,6 +26,28 @@ fun RomMDroidNavHost() {
         Route.PlatformList.path
     } else {
         Route.Setup.path
+    }
+
+    // Select and Start work from anywhere, the way the two little buttons do on
+    // a console: one opens the settings, the other the queue.  They sit under
+    // every screen's own bindings, so a screen is free to take them back.
+    //
+    // Not during setup — neither page has anything to say before there is a
+    // server to talk to, and the queue would be a way out of an unfinished
+    // sign-in that leads nowhere.
+    val route by navController.currentBackStackEntryAsState()
+    fun openOnce(path: String): Boolean {
+        val current = route?.destination?.route
+        if (current == Route.Setup.path || current == path) return true
+        navController.navigate(path) { launchSingleTop = true }
+        return true
+    }
+    GamepadHandler { action ->
+        when (action) {
+            GamepadAction.Settings  -> openOnce(Route.Settings.path)
+            GamepadAction.Downloads -> openOnce(Route.Downloads.path)
+            else                    -> false
+        }
     }
 
     NavHost(

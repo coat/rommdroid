@@ -16,6 +16,14 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
 
+    <!-- This is built for Android gaming handhelds, where the buttons are the
+         primary input: every screen can be driven from a controller alone.
+         Neither is required — the app runs on a plain phone with a touchscreen
+         and no gamepad, and declaring the touchscreen optional is what keeps it
+         installable on a device that has only the buttons. -->
+    <uses-feature android:name="android.hardware.gamepad" android:required="false" />
+    <uses-feature android:name="android.hardware.touchscreen" android:required="false" />
+
     <application
         android:name=".RomMDroidApp"
         android:allowBackup="true"
