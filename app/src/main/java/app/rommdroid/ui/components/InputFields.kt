@@ -9,6 +9,7 @@ import android.text.TextWatcher
 import android.util.TypedValue
 import android.view.Gravity
 import android.view.KeyEvent
+import android.view.View
 import android.view.ViewGroup
 import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputConnection
@@ -83,12 +84,41 @@ enum class InputKind { Text, Uri, Password }
 private class LabelledEditText(context: Context) : EditText(context) {
     var imeLabel: CharSequence? = null
 
+    /** True only while [onCreateInputConnection] is inside its super call. */
+    private var startingInput = false
+
     override fun onCreateInputConnection(outAttrs: EditorInfo): InputConnection? {
-        val connection = super.onCreateInputConnection(outAttrs)
+        startingInput = true
+        val connection = try {
+            super.onCreateInputConnection(outAttrs)
+        } finally {
+            startingInput = false
+        }
         imeLabel?.let { outAttrs.hintText = it }
         outAttrs.imeOptions = outAttrs.imeOptions or EditorInfo.IME_FLAG_NO_FULLSCREEN
         return connection
     }
+
+    /**
+     * While the input connection is being built, refuse to look for the next
+     * focusable view.
+     *
+     * TextView asks that question — twice, up and down — to decide whether to
+     * set the IME's navigate-next and navigate-previous flags.  Inside a
+     * Compose hierarchy the search is answered by walking the composition, and
+     * a LazyColumn answers it by composing its way past the viewport looking
+     * for something focusable to hand back.  It never finds one, because the
+     * rows are Compose nodes and this search only accepts Views — so over a
+     * list of a few thousand ROMs it lays out the entire list on the main
+     * thread and the app ANRs the moment the keyboard opens.
+     *
+     * Nothing here wants the answer anyway: fields hand off to each other
+     * through [InputFieldHandle.requestFocus] from their own IME action, not
+     * through the IME's navigate keys.  Only this one question is refused;
+     * ordinary focus traversal, D-pad included, still goes through.
+     */
+    override fun focusSearch(direction: Int): View? =
+        if (startingInput) null else super.focusSearch(direction)
 }
 
 /**
