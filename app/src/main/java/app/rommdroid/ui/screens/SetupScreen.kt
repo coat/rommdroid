@@ -14,13 +14,8 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
-import kotlinx.serialization.json.Json
-import kotlinx.serialization.json.JsonPrimitive
-import kotlinx.serialization.json.jsonObject
-import retrofit2.HttpException
-import app.rommdroid.data.api.RomMApi
-import app.rommdroid.data.repository.CredentialRepository
 import android.view.inputmethod.EditorInfo
+import app.rommdroid.data.repository.ServerConnector
 import app.rommdroid.ui.components.InputKind
 import app.rommdroid.ui.components.OutlinedInputField
 import app.rommdroid.ui.components.rememberInputFieldHandle
@@ -37,8 +32,7 @@ sealed interface SetupState {
 
 @HiltViewModel
 class SetupViewModel @Inject constructor(
-    private val credentials: CredentialRepository,
-    private val api: RomMApi,
+    private val connector: ServerConnector,
 ) : ViewModel() {
 
     private val _state = MutableStateFlow<SetupState>(SetupState.Idle)
@@ -47,54 +41,12 @@ class SetupViewModel @Inject constructor(
     fun connect(serverUrl: String, username: String, password: String) {
         viewModelScope.launch {
             _state.value = SetupState.Loading
-            try {
-                // Store server URL and basic credentials so interceptors work
-                credentials.serverUrl = serverUrl.trimEnd('/')
-                credentials.setBasicCredentials(username, password)
-
-                // Verify server is reachable (Basic auth is attached by AuthInterceptor)
-                api.heartbeat()
-
-                // Create a client token — Basic auth is used for this request
-                val tokenResp = api.createClientToken(
-                    app.rommdroid.data.api.model.CreateTokenRequest(name = "RomMDroid")
-                )
-                // raw_token is present only on creation; save it and drop the password
-                if (tokenResp.rawToken != null) {
-                    credentials.apiToken = tokenResp.rawToken
-                    credentials.clearPassword()
-                }
-                // Even if token creation failed (e.g. permissions), we can still proceed
-                // using Basic auth for now — the token will be null and AuthInterceptor
-                // falls back to Basic automatically.
-
-                _state.value = SetupState.Done
-            } catch (e: Exception) {
-                // Clean up partial state so the user can retry cleanly
-                credentials.serverUrl = null
-                credentials.clearAll()
-                _state.value = SetupState.Error(e.describe())
-            }
+            _state.value = connector.signIn(serverUrl, username, password).fold(
+                onSuccess = { SetupState.Done },
+                onFailure = { SetupState.Error(it.message ?: "Connection failed") },
+            )
         }
     }
-}
-
-/**
- * A bare Retrofit [HttpException] only says "HTTP 422 Unprocessable Content",
- * which hides the reason the server gave.  RomM puts that in a JSON "detail"
- * field, so pull it out when it's there.
- */
-private fun Exception.describe(): String {
-    val fallback = message ?: "Connection failed"
-    if (this !is HttpException) return fallback
-    val body = response()?.errorBody()?.string().orEmpty()
-    val detail = runCatching {
-        Json { ignoreUnknownKeys = true }
-            .parseToJsonElement(body)
-            .jsonObject["detail"]
-            ?.let { if (it is JsonPrimitive) it.content else it.toString() }
-    }.getOrNull()
-    return if (detail.isNullOrBlank()) fallback else "$fallback: $detail"
 }
 
 // ── Screen ────────────────────────────────────────────────────────────────────

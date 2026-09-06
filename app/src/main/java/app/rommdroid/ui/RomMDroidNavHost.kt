@@ -106,16 +106,25 @@ fun RomMDroidNavHost() {
         // ── Settings ──────────────────────────────────────────────────────────
         composable(Route.Settings.path) {
             SettingsScreen(
-                viewModel       = hiltViewModel(),
-                onFolderMapping = { navController.navigate(Route.FolderMapping.path) },
-                onResetSetup    = {
+                viewModel        = hiltViewModel(),
+                onEditConnection = { navController.navigate(Route.Connection.path) },
+                onFolderMapping  = { navController.navigate(Route.FolderMapping.path) },
+                onResetSetup     = {
                     // Wipes back stack and returns to setup so the user can
                     // point the app at a different server or re-authenticate.
                     navController.navigate(Route.Setup.path) {
                         popUpTo(0) { inclusive = true }
                     }
                 },
-                onBack          = { navController.popBackStack() },
+                onBack           = { navController.popBackStack() },
+            )
+        }
+
+        composable(Route.Connection.path) {
+            ConnectionScreen(
+                viewModel = hiltViewModel(),
+                onSaved   = { navController.popBackStack() },
+                onBack    = { navController.popBackStack() },
             )
         }
 
