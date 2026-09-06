@@ -40,6 +40,12 @@ data class RomEntity(
     val pathCoverLarge: String?,
     val updatedAt: String?,
     /**
+     * The server's aggregate score out of 100, or null when no metadata
+     * provider scored the game — see
+     * [app.rommdroid.data.api.model.RomMetadataSchema.averageRating].
+     */
+    val averageRating: Double? = null,
+    /**
      * Identity shared by every regional copy of this game — see
      * [app.rommdroid.util.romGroupKey].  Stored rather than computed on read so
      * siblings can be looked up with an indexed query instead of scanning the

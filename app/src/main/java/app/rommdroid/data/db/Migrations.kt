@@ -93,5 +93,19 @@ val MIGRATION_3_4 = object : Migration(3, 4) {
     }
 }
 
+/**
+ * Adds the aggregate rating a ROM list row shows.
+ *
+ * Left null for every existing row rather than backfilled: the value only
+ * exists on the server, and opening a platform full-syncs it anyway (see
+ * [app.rommdroid.ui.screens.RomListViewModel]), so the column fills itself in
+ * the first time the user visits each list.
+ */
+val MIGRATION_4_5 = object : Migration(4, 5) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL("ALTER TABLE `roms` ADD COLUMN `averageRating` REAL")
+    }
+}
+
 /** Every migration, in the order the versions shipped. */
-val ALL_MIGRATIONS = arrayOf(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4)
+val ALL_MIGRATIONS = arrayOf(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5)

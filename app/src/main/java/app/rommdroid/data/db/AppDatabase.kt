@@ -12,7 +12,7 @@ import androidx.room.RoomDatabase
         PlatformSubfolderEntity::class,
         DownloadEntity::class,
     ],
-    version = 4,
+    version = 5,
     exportSchema = false,   // set to true + configure schemaLocation before release
 )
 abstract class AppDatabase : RoomDatabase() {

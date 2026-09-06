@@ -122,6 +122,27 @@ data class RomFileSchema(
 )
 
 @Serializable
+data class RomMetadataSchema(
+    val genres: List<String> = emptyList(),
+    val franchises: List<String> = emptyList(),
+    val collections: List<String> = emptyList(),
+    val companies: List<String> = emptyList(),
+    val publishers: List<String> = emptyList(),
+    val developers: List<String> = emptyList(),
+    @SerialName("game_modes")           val gameModes: List<String> = emptyList(),
+    @SerialName("age_ratings")          val ageRatings: List<String> = emptyList(),
+    @SerialName("player_count")         val playerCount: String = "",
+    @SerialName("first_release_date")   val firstReleaseDate: Long? = null,
+    /**
+     * The server's aggregate score, 0-100.  It is the mean of whichever
+     * providers scored the game, each normalised to that scale by RomM (IGDB
+     * already is; MobyGames and ScreenScraper are x10, LaunchBox x20), and is
+     * null when no provider scored it at all.
+     */
+    @SerialName("average_rating")       val averageRating: Double? = null,
+)
+
+@Serializable
 data class SimpleRomSchema(
     val id: Int,
     // ── Platform ──────────────────────────────────────────────────────────────
@@ -146,10 +167,10 @@ data class SimpleRomSchema(
     @SerialName("launchbox_id")             val launchboxId: Int? = null,
     @SerialName("hasheous_id")              val hasheousId: Int? = null,
     @SerialName("tgdb_id")                  val tgdbId: Int? = null,
-    @SerialName("flashpoint_id")            val flashpointId: Int? = null,
+    @SerialName("flashpoint_id")            val flashpointId: String? = null,
     @SerialName("hltb_id")                  val hltbId: Int? = null,
-    @SerialName("gamelist_id")              val gamelistId: Int? = null,
-    @SerialName("libretro_id")              val libretroId: Int? = null,
+    @SerialName("gamelist_id")              val gamelistId: String? = null,
+    @SerialName("libretro_id")              val libretroId: String? = null,
     // ── Display ───────────────────────────────────────────────────────────────
     val name: String? = null,
     @SerialName("name_sort_key")            val nameSortKey: String? = null,
@@ -191,6 +212,8 @@ data class SimpleRomSchema(
     // ── Relations ─────────────────────────────────────────────────────────────
     @SerialName("sibling_roms")             val siblingRoms: List<SimpleRomSchema> = emptyList(),
     val files: List<RomFileSchema> = emptyList(),
+    // ── Derived metadata ──────────────────────────────────────────────────────
+    val metadatum: RomMetadataSchema = RomMetadataSchema(),
 )
 
 @Serializable
@@ -220,10 +243,10 @@ data class DetailedRomSchema(
     @SerialName("launchbox_id")             val launchboxId: Int? = null,
     @SerialName("hasheous_id")              val hasheousId: Int? = null,
     @SerialName("tgdb_id")                  val tgdbId: Int? = null,
-    @SerialName("flashpoint_id")            val flashpointId: Int? = null,
+    @SerialName("flashpoint_id")            val flashpointId: String? = null,
     @SerialName("hltb_id")                  val hltbId: Int? = null,
-    @SerialName("gamelist_id")              val gamelistId: Int? = null,
-    @SerialName("libretro_id")              val libretroId: Int? = null,
+    @SerialName("gamelist_id")              val gamelistId: String? = null,
+    @SerialName("libretro_id")              val libretroId: String? = null,
     // ── Display fields ────────────────────────────────────────────────────────
     val name: String? = null,
     @SerialName("name_sort_key")            val nameSortKey: String? = null,
@@ -263,9 +286,13 @@ data class DetailedRomSchema(
     // ── Relations (ignored for now) ───────────────────────────────────────────
     @SerialName("sibling_roms")             val siblingRoms: List<SimpleRomSchema> = emptyList(),
     val files: List<RomFileSchema> = emptyList(),
-    val genres: List<String> = emptyList(),
-    val franchises: List<String> = emptyList(),
-    val companies: List<String> = emptyList(),
+    // ── Derived metadata ──────────────────────────────────────────────────────
+    /**
+     * Genres, companies, the aggregate rating and the rest.  The API nests all
+     * of it under "metadatum"; none of these fields exist alongside [summary],
+     * so reading them from anywhere else yields nothing.
+     */
+    val metadatum: RomMetadataSchema = RomMetadataSchema(),
 )
 
 // ── Firmware ──────────────────────────────────────────────────────────────────

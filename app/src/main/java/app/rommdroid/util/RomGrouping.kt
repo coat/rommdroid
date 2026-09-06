@@ -50,6 +50,15 @@ data class RomGroup(
     val size: Int get() = variants.size
     /** True when this row stands for more than one downloadable copy. */
     val hasVariants: Boolean get() = variants.size > 1
+
+    /**
+     * The game's score, from whichever variant carries one.
+     *
+     * A rating belongs to the game rather than to any one copy of it, but only
+     * the variants the server identified have it — so an unidentified preferred
+     * copy borrows the score from an identified sibling instead of showing none.
+     */
+    val rating: Double? get() = variants.firstNotNullOfOrNull { it.averageRating }
 }
 
 /**

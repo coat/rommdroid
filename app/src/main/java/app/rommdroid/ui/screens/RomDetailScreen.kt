@@ -50,6 +50,7 @@ import app.rommdroid.ui.components.GamepadButton
 import app.rommdroid.ui.components.GamepadHandler
 import app.rommdroid.ui.components.GamepadHint
 import app.rommdroid.ui.components.GamepadHintBar
+import app.rommdroid.ui.components.RatingBadge
 import app.rommdroid.ui.components.RestoreFocus
 import app.rommdroid.ui.components.StickScroll
 import app.rommdroid.ui.components.focusOutline
@@ -405,11 +406,17 @@ fun RomDetailScreen(
                                     style = MaterialTheme.typography.headlineSmall,
                                 )
                                 Spacer(Modifier.height(4.dp))
-                                Text(
-                                    rom.platformDisplayName,
-                                    style = MaterialTheme.typography.labelLarge,
-                                    color = MaterialTheme.colorScheme.primary,
-                                )
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Text(
+                                        rom.platformDisplayName,
+                                        style = MaterialTheme.typography.labelLarge,
+                                        color = MaterialTheme.colorScheme.primary,
+                                    )
+                                    rom.metadatum.averageRating?.let { rating ->
+                                        Spacer(Modifier.width(12.dp))
+                                        RatingBadge(rating)
+                                    }
+                                }
                                 if (!rom.summary.isNullOrBlank()) {
                                     Spacer(Modifier.height(12.dp))
                                     Text(rom.summary, style = MaterialTheme.typography.bodyMedium)
