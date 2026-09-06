@@ -45,6 +45,8 @@ import app.rommdroid.data.download.asMessage
 import app.rommdroid.data.repository.CredentialRepository
 import app.rommdroid.data.repository.DownloadTarget
 import app.rommdroid.data.repository.DownloadTargetRepository
+import app.rommdroid.data.repository.GamepadLayout
+import app.rommdroid.data.repository.GamepadLayoutRepository
 import app.rommdroid.data.repository.RomRepository
 import app.rommdroid.data.repository.ServerConnector
 import app.rommdroid.ui.components.GamepadAction
@@ -57,7 +59,7 @@ import app.rommdroid.ui.components.OutlinedInputField
 import app.rommdroid.ui.components.StickScroll
 import app.rommdroid.ui.components.focusOutline
 import app.rommdroid.ui.components.gamepadRow
-import app.rommdroid.ui.components.rememberHasGamepad
+import app.rommdroid.ui.components.rememberButtonLayout
 import app.rommdroid.ui.components.rememberInputFieldHandle
 import app.rommdroid.ui.components.scrollPage
 import app.rommdroid.ui.components.withButton
@@ -198,8 +200,8 @@ fun SearchScreen(
         }
     }
 
-    val hasGamepad = rememberHasGamepad()
-    LaunchedEffect(hasGamepad) {
+    val buttons = rememberButtonLayout()
+    LaunchedEffect(buttons) {
         viewModel.messages.collect { message ->
             val action = when {
                 message.undoIds.isNotEmpty() -> "Undo"
@@ -208,7 +210,7 @@ fun SearchScreen(
             }
             val result = snackbarHostState.showSnackbar(
                 message     = message.text,
-                actionLabel = action.withButton(GamepadButton.Y, hasGamepad),
+                actionLabel = action.withButton(GamepadButton.Y, buttons),
                 duration    = SnackbarDuration.Short,
             )
             if (result == SnackbarResult.ActionPerformed) {
@@ -409,11 +411,15 @@ fun DownloadsScreen(
                 Spacer(Modifier.height(12.dp))
                 Text("Nothing downloading", style = MaterialTheme.typography.titleMedium)
                 Spacer(Modifier.height(4.dp))
+                // The gesture and the button are the same action, and the one
+                // the reader has no way to perform is not worth naming.  The
+                // button is named in the user's own lettering, which is not
+                // always the X the keycode is called.
+                val buttons = rememberButtonLayout()
                 Text(
-                    // The gesture and the button are the same action, and the
-                    // one the reader has no way to perform is not worth naming.
-                    if (rememberHasGamepad()) {
-                        "Press X on a game in any ROM list to add it here."
+                    if (buttons != null) {
+                        "Press ${GamepadButton.X.glyph(buttons)} on a game in " +
+                            "any ROM list to add it here."
                     } else {
                         "Long-press a game in any ROM list to add it here."
                     },
@@ -571,7 +577,13 @@ class SettingsViewModel @Inject constructor(
     private val credentials: CredentialRepository,
     private val connector: ServerConnector,
     private val repo: RomRepository,
+    private val buttonLayout: GamepadLayoutRepository,
 ) : ViewModel() {
+
+    /** Which lettering the hint bars print; see [GamepadLayout]. */
+    val gamepadLayout: StateFlow<GamepadLayout> = buttonLayout.layout
+
+    fun setGamepadLayout(layout: GamepadLayout) = buttonLayout.set(layout)
 
     private val _savedServerUrl = MutableStateFlow(credentials.serverUrl.orEmpty())
     /**
@@ -698,6 +710,7 @@ fun SettingsScreen(
     val canSaveUnverified by viewModel.canSaveUnverified.collectAsState()
     val savedServerUrl by viewModel.savedServerUrl.collectAsState()
     val savedUsername by viewModel.savedUsername.collectAsState()
+    val gamepadLayout by viewModel.gamepadLayout.collectAsState()
 
     var serverUrl by rememberSaveable { mutableStateOf(savedServerUrl) }
     var username  by rememberSaveable { mutableStateOf(savedUsername) }
@@ -882,6 +895,43 @@ fun SettingsScreen(
 
             HorizontalDivider()
 
+            Text(
+                text     = "Controller",
+                style    = MaterialTheme.typography.titleSmall,
+                color    = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 16.dp),
+            )
+
+            Text(
+                // Named by what the buttons do rather than by "Xbox" and
+                // "Nintendo" alone: a handheld set to its own Xbox style is
+                // often still silkscreened the Nintendo way, so the vendor's
+                // word for the mode is the one thing that cannot be trusted
+                // here.  What the user can always check is which button just
+                // opened something.
+                text  = "Which letters the button hints print. Pick whichever matches " +
+                        "your handheld — this only changes the hints, never what the " +
+                        "buttons do.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 4.dp, bottom = 8.dp),
+            )
+
+            GamepadLayoutChoice(
+                headline   = "A opens, B goes back",
+                supporting = "Xbox and PlayStation lettering",
+                selected   = gamepadLayout == GamepadLayout.Xbox,
+                onSelect   = { viewModel.setGamepadLayout(GamepadLayout.Xbox) },
+            )
+            GamepadLayoutChoice(
+                headline   = "B opens, A goes back",
+                supporting = "Nintendo lettering",
+                selected   = gamepadLayout == GamepadLayout.Nintendo,
+                onSelect   = { viewModel.setGamepadLayout(GamepadLayout.Nintendo) },
+            )
+
+            HorizontalDivider()
+
             ListItem(
                 modifier          = Modifier.gamepadRow(onClick = onFolderMapping),
                 headlineContent   = { Text("Folder Mapping") },
@@ -977,6 +1027,34 @@ fun SettingsScreen(
             },
         )
     }
+}
+
+/**
+ * One of the two letterings, as a row a controller can walk onto.
+ *
+ * A row rather than a switch because there are two named things to choose
+ * between and neither is the "off" one, and because the hint bar at the bottom
+ * of this very screen repaints as the selection moves — which is the check the
+ * user is here to make.
+ */
+@Composable
+private fun GamepadLayoutChoice(
+    headline: String,
+    supporting: String,
+    selected: Boolean,
+    onSelect: () -> Unit,
+) {
+    ListItem(
+        modifier          = Modifier.gamepadRow(onClick = onSelect),
+        headlineContent   = { Text(headline) },
+        supportingContent = { Text(supporting) },
+        leadingContent    = {
+            // Not clickable itself: the whole row is, and a focusable control
+            // inside a focusable row gives a controller two stops for one
+            // choice.
+            RadioButton(selected = selected, onClick = null)
+        },
+    )
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

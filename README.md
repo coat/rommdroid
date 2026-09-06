@@ -40,6 +40,12 @@ Face buttons follow the Android layout — A at the bottom, B on the right —
 regardless of what the device prints on them, so a handheld set to swap A and B
 in its own settings swaps them here too.
 
+The letters in the table are the Xbox ones, which is what Android calls the
+keycodes.  A Nintendo-lettered handheld prints the other pairing on the same
+four positions, and nothing in the Android API reports which one a device uses,
+so **Settings → Controller** asks: pick "A opens" or "B opens" to match yours.
+It changes only the letters in the hint bar, never what the buttons do.
+
 ## Non-goals
 
 - Launching games / emulator integration
