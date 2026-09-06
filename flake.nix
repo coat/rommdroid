@@ -114,7 +114,7 @@
         # Build the debug APK via Gradle
         packages.default = pkgs.stdenv.mkDerivation {
           pname = "rommdroid";
-          version = "0.2.3";
+          version = "0.3.0";
           src = ./.;
 
           buildInputs = buildInputs;

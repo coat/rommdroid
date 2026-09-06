@@ -25,7 +25,7 @@ android {
         minSdk          = 29          // Android 10 — clean SAF, scoped storage
         targetSdk       = 35
         versionCode     = buildNumber
-        versionName     = "0.2.3"
+        versionName     = "0.3.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 

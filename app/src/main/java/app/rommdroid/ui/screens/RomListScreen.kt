@@ -3,8 +3,6 @@ package app.rommdroid.ui.screens
 import android.view.inputmethod.EditorInfo
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.ExperimentalFoundationApi
-import androidx.compose.foundation.combinedClickable
-import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -28,12 +26,6 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.focus.FocusRequester
-import androidx.compose.ui.focus.focusRequester
-import androidx.compose.ui.input.key.Key
-import androidx.compose.ui.input.key.KeyEventType
-import androidx.compose.ui.input.key.key
-import androidx.compose.ui.input.key.onKeyEvent
-import androidx.compose.ui.input.key.type
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.SavedStateHandle
@@ -55,8 +47,20 @@ import app.rommdroid.data.repository.CredentialRepository
 import app.rommdroid.data.repository.DownloadTargetRepository
 import app.rommdroid.data.repository.RomRepository
 import app.rommdroid.ui.components.FastScroller
+import app.rommdroid.ui.components.GamepadAction
+import app.rommdroid.ui.components.GamepadButton
+import app.rommdroid.ui.components.GamepadHandler
+import app.rommdroid.ui.components.GamepadHint
+import app.rommdroid.ui.components.GamepadHintBar
 import app.rommdroid.ui.components.OutlinedInputField
+import app.rommdroid.ui.components.RestoreFocus
+import app.rommdroid.ui.components.StickScroll
+import app.rommdroid.ui.components.focusOutline
+import app.rommdroid.ui.components.gamepadRow
+import app.rommdroid.ui.components.rememberHasGamepad
 import app.rommdroid.ui.components.rememberInputFieldHandle
+import app.rommdroid.ui.components.scrollPage
+import app.rommdroid.ui.components.withButton
 import app.rommdroid.ui.navigation.Route
 import app.rommdroid.util.RomGroup
 import app.rommdroid.util.RomSection
@@ -236,6 +240,7 @@ fun RomListScreen(
 
     val snackbarHostState = remember { SnackbarHostState() }
     val haptics = LocalHapticFeedback.current
+    val hasGamepad = rememberHasGamepad()
 
     // The filter field replaces the title rather than sitting under it: on a
     // handheld in landscape the bar plus a second row of chrome is most of the
@@ -249,15 +254,22 @@ fun RomListScreen(
     // scroller's bubble reads it, the shoulder buttons step through it.
     val sectionIndex = remember(sections) { sectionIndexOf(sections) }
 
-    // The shoulder buttons are key events, and key events go to whatever holds
-    // focus — so the list has to hold it.  Not while the filter is open: the
-    // field wants those keystrokes.
-    val listFocus = remember { FocusRequester() }
-    LaunchedEffect(filtering) {
-        if (!filtering) runCatching { listFocus.requestFocus() }
-    }
-
     LaunchedEffect(filtering) { if (filtering) filterField.requestFocus() }
+
+    // The row the controller is on.  It is both where X downloads from and
+    // where focus goes when the screen comes back from a ROM's detail page —
+    // a list of thousands is unusable if every trip into one starts at the top.
+    var focusedKey by rememberSaveable { mutableStateOf<String?>(null) }
+    val rowFocus   = remember { FocusRequester() }
+    val focusedGroup = remember(sections, focusedKey) {
+        sections.firstNotNullOfOrNull { section ->
+            section.groups.firstOrNull { it.key == focusedKey }
+        }
+    }
+    // Whatever the filter left on screen, or the top of the list: the
+    // remembered row may not have survived the last keystroke.
+    val focusTarget = focusedGroup?.key ?: sections.firstOrNull()?.groups?.firstOrNull()?.key
+    RestoreFocus(rowFocus, ready = !filtering && focusTarget != null)
 
     // Every keystroke narrows the list underneath; keeping the old scroll
     // offset would leave the user somewhere in the middle of the matches, or
@@ -272,10 +284,50 @@ fun RomListScreen(
         }
     }
 
+    /**
+     * Put the controller's cursor on a row and keep it there.
+     *
+     * Asked for over a few frames because the two things this waits on happen
+     * on later ones: the requester has to move onto the row this names, and
+     * whatever took focus in the meantime — the back arrow, when the filter
+     * field it was on is torn down — has to be taken off it again.
+     */
+    fun focusRow(key: String?) {
+        if (key == null) return
+        focusedKey = key
+        scope.launch {
+            repeat(3) {
+                withFrameNanos { }
+                runCatching { rowFocus.requestFocus() }
+            }
+        }
+    }
+
+    /**
+     * Move the cursor to where a jump landed.
+     *
+     * A jump that scrolls the list but leaves focus on the row it started from
+     * puts the cursor off screen, and the next press on the D-pad snaps the
+     * list back to it — undoing the jump.  The rows carry their group key and
+     * the sticky headers carry a "section:" one, so the first row on screen is
+     * the first visible key that is not a header's.
+     */
+    suspend fun focusTopRow() {
+        withFrameNanos { }
+        val landed = listState.layoutInfo.visibleItemsInfo
+            .firstOrNull { (it.key as? String)?.startsWith("section:") == false }
+            ?.key as? String
+        focusRow(landed)
+    }
+
     fun closeFilter() {
         filterField.hideKeyboard()
         viewModel.setFilter("")
         filtering = false
+        // Focus is inside the text field, which is about to stop existing.
+        // Left alone it lands on the first thing in the bar rather than back
+        // on the list the user was reading.
+        focusRow(focusedKey ?: sections.firstOrNull()?.groups?.firstOrNull()?.key)
     }
 
     // Back closes the field before it leaves the screen — the same thing the
@@ -288,32 +340,69 @@ fun RomListScreen(
      * This is a handheld with shoulder buttons and no second hand free for the
      * scroller — a press per letter is the cheapest jump on the device, and it
      * lands on the header so the letter is on screen when it stops.
+     *
+     * Consumed either way: at the ends of the list, and on a filtered list that
+     * has no letters left to step through, the button does nothing rather than
+     * falling through to whatever else might take it.
      */
-    fun onShoulderKey(key: Key): Boolean {
-        val target = when (key) {
-            Key.ButtonL1 -> sectionIndex.startBefore(listState.firstVisibleItemIndex)
-            Key.ButtonR1 -> sectionIndex.startAfter(listState.firstVisibleItemIndex)
-            else         -> return false
-        }
-        // Consume either way: at the ends of the list the button does nothing
-        // rather than falling through to whatever else might take it.
-        target?.let { scope.launch { listState.scrollToItem(it) } }
+    fun jumpSection(forwards: Boolean): Boolean {
+        if (sectionIndex.isEmpty) return true
+        val from   = listState.firstVisibleItemIndex
+        val target = if (forwards) sectionIndex.startAfter(from) else sectionIndex.startBefore(from)
+        target?.let { scope.launch { listState.scrollToItem(it); focusTopRow() } }
         return true
     }
 
+    GamepadHandler { action ->
+        when (action) {
+            // A snackbar is on screen for a few seconds and cannot be tapped
+            // with a controller, so while one is offering something — Undo, or
+            // a way to the folder settings — Y takes the offer.  The label on
+            // it says which button, so this is not a hidden gesture.
+            GamepadAction.Search -> {
+                val offer = snackbarHostState.currentSnackbarData
+                    ?.takeIf { it.visuals.actionLabel != null }
+                when {
+                    offer != null -> offer.performAction()
+                    // Y otherwise opens the filter, and reopens the keyboard on
+                    // a filter already showing — the Search key puts it away,
+                    // and this is the way back.
+                    filtering     -> filterField.requestFocus()
+                    else          -> filtering = true
+                }
+                true
+            }
+            // The download gesture is a long-press, which a controller cannot
+            // make; on the buttons it is X on whatever row is focused.
+            GamepadAction.Download -> {
+                focusedGroup?.let {
+                    haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                    viewModel.download(it)
+                }
+                true
+            }
+            GamepadAction.SectionPrev -> jumpSection(forwards = false)
+            GamepadAction.SectionNext -> jumpSection(forwards = true)
+            GamepadAction.PageUp      -> { scope.launch { listState.scrollPage(-1); focusTopRow() }; true }
+            GamepadAction.PageDown    -> { scope.launch { listState.scrollPage(1); focusTopRow() }; true }
+            else                      -> false
+        }
+    }
+    StickScroll(listState)
+
     // Sync failures share the queue's snackbar host rather than stacking a
     // second one on top of it.
-    LaunchedEffect(error) {
+    LaunchedEffect(error, hasGamepad) {
         val message = error ?: return@LaunchedEffect
         val result = snackbarHostState.showSnackbar(
             message     = message,
-            actionLabel = "Retry",
+            actionLabel = "Retry".withButton(GamepadButton.Y, hasGamepad),
             duration    = SnackbarDuration.Long,
         )
         if (result == SnackbarResult.ActionPerformed) viewModel.refresh()
     }
 
-    LaunchedEffect(Unit) {
+    LaunchedEffect(hasGamepad) {
         viewModel.messages.collect { message ->
             val action = when {
                 message.undoIds.isNotEmpty() -> "Undo"
@@ -322,7 +411,7 @@ fun RomListScreen(
             }
             val result = snackbarHostState.showSnackbar(
                 message     = message.text,
-                actionLabel = action,
+                actionLabel = action.withButton(GamepadButton.Y, hasGamepad),
                 duration    = SnackbarDuration.Short,
             )
             if (result == SnackbarResult.ActionPerformed) {
@@ -355,7 +444,10 @@ fun RomListScreen(
                     }
                 },
                 navigationIcon = {
-                    IconButton(onClick = { if (filtering) closeFilter() else onBack() }) {
+                    IconButton(
+                        onClick  = { if (filtering) closeFilter() else onBack() },
+                        modifier = Modifier.focusOutline(),
+                    ) {
                         if (filtering) {
                             Icon(Icons.Default.Close, contentDescription = "Clear filter")
                         } else {
@@ -367,31 +459,41 @@ fun RomListScreen(
                 // anything while the user is halfway through typing a name.
                 actions = {
                     if (!filtering) {
-                        IconButton(onClick = { filtering = true }) {
+                        IconButton(
+                            onClick  = { filtering = true },
+                            modifier = Modifier.focusOutline(),
+                        ) {
                             Icon(Icons.Default.Search, contentDescription = "Filter ROMs")
                         }
-                        IconButton(onClick = onDownloadsClick) {
+                        IconButton(onClick = onDownloadsClick, modifier = Modifier.focusOutline()) {
                             Icon(Icons.Default.Download, contentDescription = "Downloads")
                         }
-                        IconButton(onClick = { viewModel.refresh() }) {
+                        IconButton(
+                            onClick  = { viewModel.refresh() },
+                            modifier = Modifier.focusOutline(),
+                        ) {
                             Icon(Icons.Default.Refresh, contentDescription = "Refresh")
                         }
                     }
                 }
             )
-        }
+        },
+        bottomBar = {
+            GamepadHintBar(
+                listOf(
+                    GamepadHint(GamepadButton.A, "Open"),
+                    GamepadHint(GamepadButton.X, "Download"),
+                    GamepadHint(GamepadButton.Y, "Filter"),
+                    GamepadHint(GamepadButton.L1, "Letter"),
+                    GamepadHint(GamepadButton.B, "Back"),
+                )
+            )
+        },
     ) { padding ->
         Box(
             Modifier
                 .fillMaxSize()
                 .padding(padding)
-                .onKeyEvent { event ->
-                    event.type == KeyEventType.KeyDown &&
-                        !sectionIndex.isEmpty &&
-                        onShoulderKey(event.key)
-                }
-                .focusRequester(listFocus)
-                .focusable()
         ) {
             when {
                 syncing && sections.isEmpty() && filter.isBlank() -> {
@@ -426,6 +528,8 @@ fun RomListScreen(
                                         haptics.performHapticFeedback(HapticFeedbackType.LongPress)
                                         viewModel.download(group)
                                     },
+                                    onFocused   = { focusedKey = group.key },
+                                    focusRequester = rowFocus.takeIf { group.key == focusTarget },
                                 )
                                 HorizontalDivider()
                             }
@@ -513,13 +617,17 @@ private fun RomRow(
     queueing: Boolean,
     onClick: () -> Unit,
     onLongClick: () -> Unit,
+    onFocused: () -> Unit,
+    focusRequester: FocusRequester?,
 ) {
     val rom = group.primary
     ListItem(
-        modifier = Modifier.combinedClickable(
+        modifier = Modifier.gamepadRow(
             onClick          = onClick,
             onLongClick      = onLongClick,
             onLongClickLabel = "Download",
+            focusRequester   = focusRequester,
+            onFocused        = onFocused,
         ),
         headlineContent  = { Text(rom.displayName) },
         supportingContent = {

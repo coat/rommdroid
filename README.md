@@ -14,6 +14,30 @@ browse platforms, find games, and get them into your emulator's folders. That's 
 - Background download queue with progress notifications (WorkManager)
 - Firmware / BIOS download
 - Client API Token auth (no password stored after setup)
+- Full controller support — every screen is usable without touching the screen
+
+## Controls
+
+Built for Android gaming handhelds: the buttons are the primary input, and the
+hint bar along the bottom of each screen shows what they do (it appears only
+when a controller is attached).
+
+| Button          | Does                                                          |
+| --------------- | ------------------------------------------------------------- |
+| D-pad / L stick | Move between rows and buttons                                 |
+| A               | Open / activate the focused row                               |
+| B               | Back — closes the filter first, then leaves the screen        |
+| X               | Download the focused game; on a ROM's page, all of its files  |
+| Y               | Search or filter, and takes a snackbar's offer while it is up |
+| L1 / R1         | Jump to the previous / next letter in a ROM list              |
+| L2 / R2         | Page up / down                                                |
+| R stick         | Scroll a list freely                                          |
+| Select          | Settings                                                      |
+| Start           | Downloads queue                                               |
+
+Face buttons follow the Android layout — A at the bottom, B on the right —
+regardless of what the device prints on them, so a handheld set to swap A and B
+in its own settings swaps them here too.
 
 ## Non-goals
 

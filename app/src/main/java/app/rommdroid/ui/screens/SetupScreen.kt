@@ -18,6 +18,7 @@ import android.view.inputmethod.EditorInfo
 import app.rommdroid.data.repository.ServerConnector
 import app.rommdroid.ui.components.InputKind
 import app.rommdroid.ui.components.OutlinedInputField
+import app.rommdroid.ui.components.focusOutline
 import app.rommdroid.ui.components.rememberInputFieldHandle
 import javax.inject.Inject
 
@@ -137,7 +138,7 @@ fun SetupScreen(
             Button(
                 onClick  = { viewModel.connect(serverUrl, username, password) },
                 enabled  = state !is SetupState.Loading,
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier.fillMaxWidth().focusOutline(),
             ) {
                 if (state is SetupState.Loading) {
                     CircularProgressIndicator(

@@ -1,9 +1,9 @@
 package app.rommdroid.ui.screens
 
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.ArrowForwardIos
@@ -15,6 +15,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -44,6 +45,18 @@ import app.rommdroid.data.repository.CredentialRepository
 import app.rommdroid.data.repository.DownloadTarget
 import app.rommdroid.data.repository.DownloadTargetRepository
 import app.rommdroid.data.repository.RomRepository
+import app.rommdroid.ui.components.GamepadAction
+import app.rommdroid.ui.components.GamepadButton
+import app.rommdroid.ui.components.GamepadHandler
+import app.rommdroid.ui.components.GamepadHint
+import app.rommdroid.ui.components.GamepadHintBar
+import app.rommdroid.ui.components.RestoreFocus
+import app.rommdroid.ui.components.StickScroll
+import app.rommdroid.ui.components.focusOutline
+import app.rommdroid.ui.components.gamepadRow
+import app.rommdroid.ui.components.rememberHasGamepad
+import app.rommdroid.ui.components.scrollPage
+import app.rommdroid.ui.components.withButton
 import app.rommdroid.ui.navigation.Route
 import app.rommdroid.util.RomVariant
 import app.rommdroid.util.artworkUrl
@@ -272,7 +285,41 @@ fun RomDetailScreen(
 
     val snackbarHostState = remember { SnackbarHostState() }
 
-    LaunchedEffect(Unit) {
+    val listState = rememberLazyListState()
+    val scope     = rememberCoroutineScope()
+
+    // Focus starts on the first file, which is the one thing on this page a
+    // user came here to press.  Everything above it — the cover, the summary —
+    // is reading matter with nothing to activate.
+    val firstFile = remember { FocusRequester() }
+    val loaded    = state is RomDetailState.Loaded
+    RestoreFocus(firstFile, ready = loaded)
+
+    GamepadHandler { action ->
+        when (action) {
+            // The whole set, which for a multi-disc game is the only sensible
+            // thing a single button can mean.
+            GamepadAction.Download -> {
+                if (target != null) viewModel.downloadAll()
+                true
+            }
+            // Undo and "Set folder" arrive on a snackbar, which a controller
+            // cannot tap; Y takes whatever it is offering while it is up.
+            GamepadAction.Search -> {
+                snackbarHostState.currentSnackbarData
+                    ?.takeIf { it.visuals.actionLabel != null }
+                    ?.performAction()
+                true
+            }
+            GamepadAction.PageUp   -> { scope.launch { listState.scrollPage(-1) }; true }
+            GamepadAction.PageDown -> { scope.launch { listState.scrollPage(1) }; true }
+            else                   -> false
+        }
+    }
+    StickScroll(listState)
+
+    val hasGamepad = rememberHasGamepad()
+    LaunchedEffect(hasGamepad) {
         viewModel.messages.collect { message ->
             val action = when {
                 message.undoIds.isNotEmpty() -> "Undo"
@@ -281,7 +328,7 @@ fun RomDetailScreen(
             }
             val result = snackbarHostState.showSnackbar(
                 message     = message.text,
-                actionLabel = action,
+                actionLabel = action.withButton(GamepadButton.Y, hasGamepad),
                 duration    = SnackbarDuration.Short,
             )
             if (result == SnackbarResult.ActionPerformed) {
@@ -300,12 +347,21 @@ fun RomDetailScreen(
                     Text(title, maxLines = 1)
                 },
                 navigationIcon = {
-                    IconButton(onClick = onBack) {
+                    IconButton(onClick = onBack, modifier = Modifier.focusOutline()) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back")
                     }
                 },
             )
-        }
+        },
+        bottomBar = {
+            GamepadHintBar(
+                listOf(
+                    GamepadHint(GamepadButton.A, "Download file"),
+                    GamepadHint(GamepadButton.X, "Download all"),
+                    GamepadHint(GamepadButton.B, "Back"),
+                )
+            )
+        },
     ) { padding ->
         when (val s = state) {
             is RomDetailState.Loading -> {
@@ -322,7 +378,8 @@ fun RomDetailScreen(
                 val rom = s.rom
                 Box(Modifier.fillMaxSize().padding(padding)) {
                     LazyColumn(
-                        Modifier.fillMaxSize(),
+                        modifier       = Modifier.fillMaxSize(),
+                        state          = listState,
                         contentPadding = PaddingValues(bottom = 24.dp),
                     ) {
                         // Cover art
@@ -463,8 +520,9 @@ fun RomDetailScreen(
                                 Text("Files", style = MaterialTheme.typography.titleMedium)
                                 if (files.size > 1) {
                                     TextButton(
-                                        onClick = { viewModel.downloadAll() },
-                                        enabled = target != null,
+                                        onClick  = { viewModel.downloadAll() },
+                                        enabled  = target != null,
+                                        modifier = Modifier.focusOutline(),
                                     ) { Text("Download all") }
                                 }
                             }
@@ -478,6 +536,7 @@ fun RomDetailScreen(
                                 folderReadable = onDevice.readable,
                                 onDownload     = { viewModel.downloadFile(file) },
                                 onCancel       = { id -> viewModel.cancel(id) },
+                                focusRequester = firstFile.takeIf { file.id == files.first().id },
                             )
                             HorizontalDivider()
                         }
@@ -507,7 +566,7 @@ private fun RomVariantRow(
         if (onDevice) add("On device")
     }
     ListItem(
-        modifier = Modifier.clickable(onClick = onClick),
+        modifier = Modifier.gamepadRow(onClick = onClick),
         // The filename, not the region, is the headline: two copies from the
         // same region are told apart only by their "(Rev 1)" / "(Beta)" tags.
         headlineContent   = { Text(variant.fsName) },
@@ -549,9 +608,24 @@ private fun RomFileRow(
     folderReadable: Boolean,
     onDownload: () -> Unit,
     onCancel: (String) -> Unit,
+    focusRequester: FocusRequester? = null,
 ) {
     val present = onDeviceBytes != null
-    Column {
+    val running = download?.status?.isFinished == false
+    // The row does what its trailing button does.  A controller reaches rows,
+    // not the buttons inside them, and this row has exactly one action — so
+    // pressing it anywhere is the action, and the button stays for the thumb.
+    Column(
+        Modifier.gamepadRow(
+            onClick        = {
+                when {
+                    running     -> onCancel(download.id)
+                    canDownload -> onDownload()
+                }
+            },
+            focusRequester = focusRequester,
+        )
+    ) {
         ListItem(
             headlineContent   = { Text(file.fileName) },
             supportingContent = {
@@ -596,16 +670,22 @@ private fun RomFileRow(
                 }
             },
             trailingContent   = {
-                val running = download?.status?.isFinished == false
                 if (running) {
-                    IconButton(onClick = { onCancel(download.id) }) {
+                    IconButton(
+                        onClick  = { onCancel(download.id) },
+                        modifier = Modifier.focusOutline(),
+                    ) {
                         Icon(
                             imageVector        = Icons.Default.Close,
                             contentDescription = "Cancel ${file.fileName}",
                         )
                     }
                 } else {
-                    IconButton(onClick = onDownload, enabled = canDownload) {
+                    IconButton(
+                        onClick  = onDownload,
+                        enabled  = canDownload,
+                        modifier = Modifier.focusOutline(),
+                    ) {
                         Icon(
                             imageVector        = Icons.Default.Download,
                             contentDescription = if (present) "Download ${file.fileName} again"
