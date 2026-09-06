@@ -227,6 +227,9 @@ interface PlatformSubfolderDao {
     @Query("SELECT * FROM platform_subfolders")
     fun observeAll(): Flow<List<PlatformSubfolderEntity>>
 
+    @Query("SELECT * FROM platform_subfolders")
+    suspend fun getAll(): List<PlatformSubfolderEntity>
+
     @Query("SELECT * FROM platform_subfolders WHERE platformId = :platformId")
     suspend fun getForPlatform(platformId: Int): PlatformSubfolderEntity?
 
@@ -241,6 +244,9 @@ interface PlatformSubfolderDao {
 interface PlatformFolderDao {
     @Query("SELECT * FROM platform_folders")
     fun observeAll(): Flow<List<PlatformFolderEntity>>
+
+    @Query("SELECT * FROM platform_folders")
+    suspend fun getAll(): List<PlatformFolderEntity>
 
     @Query("SELECT * FROM platform_folders WHERE platformId = :platformId")
     suspend fun getForPlatform(platformId: Int): PlatformFolderEntity?

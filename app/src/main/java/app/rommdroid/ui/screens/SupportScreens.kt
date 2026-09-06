@@ -33,14 +33,9 @@ import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import app.rommdroid.data.db.BaseFolderDao
 import app.rommdroid.data.db.BaseFolderEntity
 import app.rommdroid.data.db.PlatformEntity
-import app.rommdroid.data.db.PlatformFolderDao
-import app.rommdroid.data.db.PlatformFolderEntity
 import app.rommdroid.data.db.DownloadStatus
-import app.rommdroid.data.db.PlatformSubfolderDao
-import app.rommdroid.data.db.PlatformSubfolderEntity
 import app.rommdroid.data.db.RomEntity
 import app.rommdroid.data.download.DownloadItem
 import app.rommdroid.data.download.DownloadQueue
@@ -849,15 +844,12 @@ data class PlatformFolderRow(
 @HiltViewModel
 class FolderMappingViewModel @Inject constructor(
     private val repo: RomRepository,
-    private val folderDao: PlatformFolderDao,
-    private val baseFolderDao: BaseFolderDao,
-    private val subfolderDao: PlatformSubfolderDao,
     private val targets: DownloadTargetRepository,
     private val localRoms: LocalRomIndex,
 ) : ViewModel() {
 
     val baseFolder: StateFlow<BaseFolderEntity?> =
-        baseFolderDao.observe()
+        targets.observeBaseFolder()
             .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
 
     /**
@@ -867,9 +859,9 @@ class FolderMappingViewModel @Inject constructor(
      */
     val rows: StateFlow<List<PlatformFolderRow>> = combine(
         repo.observePlatforms(),
-        baseFolderDao.observe(),
-        folderDao.observeAll(),
-        subfolderDao.observeAll(),
+        targets.observeBaseFolder(),
+        targets.observeOverrides(),
+        targets.observeSubfolders(),
     ) { platforms, base, overrides, subfolders ->
         val overrideMap = overrides.associateBy { it.platformId }
         val subMap      = subfolders.associateBy { it.platformId }
@@ -894,14 +886,14 @@ class FolderMappingViewModel @Inject constructor(
     /** Point a single platform at a directory outside the base folder. */
     fun setPlatformFolder(platformId: Int, uri: String, displayPath: String) {
         viewModelScope.launch {
-            folderDao.upsert(PlatformFolderEntity(platformId, uri, displayPath))
+            targets.setPlatformFolder(platformId, uri, displayPath)
             localRoms.invalidate()
         }
     }
 
     fun renameSubfolder(platformId: Int, name: String) {
         viewModelScope.launch {
-            subfolderDao.upsert(PlatformSubfolderEntity(platformId, name.trim().trim('/')))
+            targets.setSubfolder(platformId, name)
             localRoms.invalidate()
         }
     }
@@ -909,8 +901,7 @@ class FolderMappingViewModel @Inject constructor(
     /** Drop both kinds of override so the platform follows the ES-DE default again. */
     fun resetPlatform(platformId: Int) {
         viewModelScope.launch {
-            folderDao.deleteForPlatform(platformId)
-            subfolderDao.deleteForPlatform(platformId)
+            targets.resetPlatform(platformId)
             localRoms.invalidate()
         }
     }
