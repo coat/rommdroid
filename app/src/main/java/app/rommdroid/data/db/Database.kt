@@ -103,6 +103,35 @@ interface PlatformDao {
     @Upsert
     suspend fun upsertAll(platforms: List<PlatformEntity>)
 
+    @Query("DELETE FROM platforms WHERE id NOT IN (:keepIds)")
+    suspend fun deleteMissing(keepIds: List<Int>)
+
+    /**
+     * ROM rows whose platform is no longer cached.
+     *
+     * Lives here rather than on [RomDao] because it is the other half of
+     * [reconcile] — a platform row leaving takes its ROMs with it, and the two
+     * deletes have to land in the same transaction to avoid a crash in between
+     * leaving hundreds of unreachable rows behind.
+     */
+    @Query("DELETE FROM roms WHERE platformId NOT IN (SELECT id FROM platforms)")
+    suspend fun deleteRomsWithoutPlatform()
+
+    /**
+     * Makes the cache match a full listing from the server: [platforms] is
+     * everything that exists, so anything else is gone and goes too, along with
+     * the ROMs that belonged to it.
+     *
+     * Folder mappings are deliberately left alone — see
+     * [app.rommdroid.data.repository.RomRepository.syncPlatforms].
+     */
+    @Transaction
+    suspend fun reconcile(platforms: List<PlatformEntity>) {
+        upsertAll(platforms)
+        deleteMissing(platforms.map { it.id })
+        deleteRomsWithoutPlatform()
+    }
+
     @Query("DELETE FROM platforms")
     suspend fun deleteAll()
 }
@@ -157,6 +186,22 @@ interface RomDao {
 
     @Query("DELETE FROM roms WHERE platformId = :platformId")
     suspend fun deleteByPlatform(platformId: Int)
+
+    /**
+     * Swaps in a freshly fetched listing for one platform.
+     *
+     * [roms] is everything the server has for [platformId], so the old rows go
+     * and the new ones land in the same transaction — a reader never sees the
+     * platform empty, and a crash mid-swap leaves the previous listing intact.
+     */
+    @Transaction
+    suspend fun replacePlatform(platformId: Int, roms: List<RomEntity>) {
+        deleteByPlatform(platformId)
+        upsertAll(roms)
+    }
+
+    @Query("DELETE FROM roms")
+    suspend fun deleteAll()
 
     @Query("SELECT MAX(updatedAt) FROM roms WHERE platformId = :platformId")
     suspend fun latestUpdatedAt(platformId: Int): String?

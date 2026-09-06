@@ -27,9 +27,49 @@ class RomRepository @Inject constructor(
 
     fun observePlatforms(): Flow<List<PlatformEntity>> = platformDao.observeAll()
 
+    /**
+     * Refresh the cached platform list.
+     *
+     * A full sync ([updatedAfter] null) also drops platforms the server no
+     * longer has, along with their ROMs: an upsert-only sync leaves a deleted
+     * platform in the list for good, since the user has no reason to open it
+     * and nothing else ever prunes it.
+     *
+     * Two responses are deliberately *not* treated as deletions:
+     *  - an incremental one, which carries only what changed and so says
+     *    nothing about what is gone, and
+     *  - an empty full listing, which is indistinguishable from a server that
+     *    answered a misrouted or over-filtered request with `[]`.  Wrongly
+     *    keeping a stale row until the next sync is cheap; wrongly wiping the
+     *    whole list is not.  A library that really is empty can be cleared from
+     *    Settings.
+     *
+     * Folder mappings survive either way.  A platform can drop out of a
+     * response for reasons other than deletion, and a hand-picked SAF folder is
+     * the one thing here that a re-sync cannot rebuild.
+     */
     suspend fun syncPlatforms(updatedAfter: String? = null) {
-        val remote = api.getPlatforms(updatedAfter = updatedAfter)
-        platformDao.upsertAll(remote.map { it.toEntity() })
+        val remote = api.getPlatforms(updatedAfter = updatedAfter).map { it.toEntity() }
+        if (updatedAfter == null && remote.isNotEmpty()) {
+            platformDao.reconcile(remote)
+        } else {
+            platformDao.upsertAll(remote)
+        }
+    }
+
+    /**
+     * Drops the whole cached library — every platform and ROM row.
+     *
+     * Needed when the app is pointed at a different server: RomM ids are
+     * per-server, so leaving the previous server's rows in place renders its
+     * cached metadata under the new server's platforms.
+     *
+     * Downloaded files, folder mappings and the download queue are untouched;
+     * they are the user's own and no sync can recreate them.
+     */
+    suspend fun clearLibraryCache() {
+        platformDao.deleteAll()
+        romDao.deleteAll()
     }
 
     // ── ROMs ──────────────────────────────────────────────────────────────────
@@ -40,14 +80,18 @@ class RomRepository @Inject constructor(
     /**
      * Fetch ROMs for [platformId] from the server, storing all pages into Room.
      *
-     * Uses [updatedAfter] for incremental sync.  On a full refresh (null),
-     * deletes existing rows first to avoid stale data from deleted ROMs.
+     * Uses [updatedAfter] for incremental sync.  A full refresh (null) replaces
+     * the platform's rows so ROMs deleted on the server stop being listed.
+     *
+     * Every page is collected before anything is written.  Deleting up front
+     * instead would mean a refresh out of range of the server — which is where
+     * a handheld usually is — emptying the cache it was meant to update, and a
+     * connection dropped halfway through the pages leaving a part of a library
+     * looking like all of it.  Holding the pages costs peak memory on the order
+     * of the platform's size, which even an arcade set keeps to megabytes.
      */
     suspend fun syncRoms(platformId: Int, updatedAfter: String? = null) {
-        if (updatedAfter == null) {
-            romDao.deleteByPlatform(platformId)
-        }
-
+        val fetched = mutableListOf<RomEntity>()
         var offset = 0
         val pageSize = 100
         do {
@@ -60,9 +104,15 @@ class RomRepository @Inject constructor(
                 withFilterValues = false,
                 updatedAfter     = updatedAfter,
             )
-            romDao.upsertAll(page.items.map { it.toEntity() })
+            fetched += page.items.map { it.toEntity() }
             offset += pageSize
         } while (offset < page.total)
+
+        if (updatedAfter == null) {
+            romDao.replacePlatform(platformId, fetched)
+        } else {
+            romDao.upsertAll(fetched)
+        }
     }
 
     suspend fun getRomDetail(id: Int): DetailedRomSchema = api.getRom(id).run {
