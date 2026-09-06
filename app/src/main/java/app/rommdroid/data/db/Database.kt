@@ -55,6 +55,52 @@ data class RomEntity(
 )
 
 /**
+ * A user-made collection: "Favourites", "To Play", and the rest.
+ *
+ * Cached like platforms are, so the list is there before the sync lands and
+ * still there with the server out of reach.  Its ROMs live in
+ * [CollectionRomEntity] rather than in a column here.
+ */
+@Entity(tableName = "collections")
+data class CollectionEntity(
+    @PrimaryKey val id: Int,
+    val name: String,
+    val description: String,
+    /**
+     * What the *server* says the collection holds.  Not the number of rows in
+     * [CollectionRomEntity], which is zero until the collection is first
+     * opened — so the list can say "23 games" without fetching all of them.
+     */
+    val romCount: Int,
+    val pathCoverSmall: String?,
+    val pathCoverLarge: String?,
+    val urlCover: String?,
+    val isFavorite: Boolean,
+    val isPublic: Boolean,
+    val ownerUsername: String,
+    val updatedAt: String?,
+)
+
+/**
+ * Which ROMs are in which collection.
+ *
+ * A join table rather than a list of ids on the collection row so the list
+ * screen can observe an indexed query, the way the platform list observes
+ * `roms.platformId`.  Rows can outlive the ROM they name — a platform sync
+ * deletes and rebuilds its ROMs — which is why every read of this joins
+ * against `roms` rather than trusting it alone.
+ */
+@Entity(
+    tableName = "collection_roms",
+    primaryKeys = ["collectionId", "romId"],
+    indices = [Index("romId")],
+)
+data class CollectionRomEntity(
+    val collectionId: Int,
+    val romId: Int,
+)
+
+/**
  * The single base "ROMs" folder. Platform subfolders are created underneath it,
  * so one SAF grant covers every platform instead of one grant per platform.
  */
@@ -124,6 +170,16 @@ interface PlatformDao {
     suspend fun deleteRomsWithoutPlatform()
 
     /**
+     * Collection membership rows left pointing at ROMs that no longer exist.
+     *
+     * Same transaction, same reason as [deleteRomsWithoutPlatform]: the rows a
+     * departing platform leaves behind are unreachable, and a collection
+     * re-sync is the only other thing that would ever clear them.
+     */
+    @Query("DELETE FROM collection_roms WHERE romId NOT IN (SELECT id FROM roms)")
+    suspend fun deleteMembershipsWithoutRom()
+
+    /**
      * Makes the cache match a full listing from the server: [platforms] is
      * everything that exists, so anything else is gone and goes too, along with
      * the ROMs that belonged to it.
@@ -136,6 +192,7 @@ interface PlatformDao {
         upsertAll(platforms)
         deleteMissing(platforms.map { it.id })
         deleteRomsWithoutPlatform()
+        deleteMembershipsWithoutRom()
     }
 
     @Query("DELETE FROM platforms")
@@ -211,6 +268,91 @@ interface RomDao {
 
     @Query("SELECT MAX(updatedAt) FROM roms WHERE platformId = :platformId")
     suspend fun latestUpdatedAt(platformId: Int): String?
+}
+
+@Dao
+interface CollectionDao {
+    /**
+     * Favourites first, then alphabetical — the order RomM's own UI uses, and
+     * the one the user is looking for when they open this list.
+     */
+    @Query("SELECT * FROM collections ORDER BY isFavorite DESC, name COLLATE NOCASE ASC")
+    fun observeAll(): Flow<List<CollectionEntity>>
+
+    /** Drives whether the platform list pins a Collections row at all. */
+    @Query("SELECT COUNT(*) FROM collections")
+    fun observeCount(): Flow<Int>
+
+    @Query("SELECT * FROM collections WHERE id = :id")
+    suspend fun getById(id: Int): CollectionEntity?
+
+    /**
+     * The ROMs in one collection, ordered exactly as [ROMS_BY_PLATFORM] orders
+     * a platform's — both lists cut into the same letter sections, so they have
+     * to agree on where the letters fall.
+     *
+     * An inner join, so a membership row whose ROM was dropped by a platform
+     * re-sync simply falls out of the list instead of drawing a blank one.
+     */
+    @Query("""
+        SELECT roms.* FROM roms
+        INNER JOIN collection_roms ON collection_roms.romId = roms.id
+        WHERE collection_roms.collectionId = :collectionId
+        ORDER BY COALESCE(NULLIF(roms.name, ''), roms.fsNameNoTags) COLLATE NOCASE ASC
+    """)
+    fun observeRoms(collectionId: Int): Flow<List<RomEntity>>
+
+    @Upsert
+    suspend fun upsertAll(collections: List<CollectionEntity>)
+
+    @Query("DELETE FROM collections WHERE id NOT IN (:keepIds)")
+    suspend fun deleteMissing(keepIds: List<Int>)
+
+    @Query("DELETE FROM collection_roms WHERE collectionId NOT IN (SELECT id FROM collections)")
+    suspend fun deleteMembershipsWithoutCollection()
+
+    /**
+     * Makes the cache match a full listing: [collections] is everything the
+     * server has, so anything else is gone, and takes its membership rows with
+     * it in the same transaction.
+     */
+    @Transaction
+    suspend fun reconcile(collections: List<CollectionEntity>) {
+        upsertAll(collections)
+        deleteMissing(collections.map { it.id })
+        deleteMembershipsWithoutCollection()
+    }
+
+    @Query("DELETE FROM collection_roms WHERE collectionId = :collectionId")
+    suspend fun deleteMembership(collectionId: Int)
+
+    @Upsert
+    suspend fun upsertMembership(rows: List<CollectionRomEntity>)
+
+    /**
+     * Swaps in a freshly fetched membership for one collection.
+     *
+     * Same shape and same reasoning as [RomDao.replacePlatform]: a game removed
+     * from the collection on the server has to leave the list, and doing the
+     * two writes in one transaction means a reader never catches it empty.
+     */
+    @Transaction
+    suspend fun replaceMembership(collectionId: Int, rows: List<CollectionRomEntity>) {
+        deleteMembership(collectionId)
+        upsertMembership(rows)
+    }
+
+    @Query("DELETE FROM collections")
+    suspend fun deleteAllCollections()
+
+    @Query("DELETE FROM collection_roms")
+    suspend fun deleteAllMemberships()
+
+    @Transaction
+    suspend fun deleteAll() {
+        deleteAllMemberships()
+        deleteAllCollections()
+    }
 }
 
 @Dao

@@ -61,6 +61,17 @@ interface RomMApi {
     @GET("api/platforms/{id}")
     suspend fun getPlatform(@Path("id") id: Int): PlatformSchema
 
+    // ── Collections ──────────────────────────────────────────────────────────
+
+    /**
+     * List the user's collections.  Flat array, like the platform listing.
+     *
+     * The ROMs in one are fetched through [getRoms] with `collection_id`, not
+     * from a collection endpoint of their own.
+     */
+    @GET("api/collections")
+    suspend fun getCollections(): List<CollectionSchema>
+
     // ── ROMs ──────────────────────────────────────────────────────────────────
 
     /**

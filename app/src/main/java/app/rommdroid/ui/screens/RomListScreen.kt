@@ -92,7 +92,22 @@ class RomListViewModel @Inject constructor(
     private val localRoms: LocalRomIndex,
 ) : ViewModel() {
 
-    private val platformId: Int = checkNotNull(savedStateHandle[Route.RomList.ARG])
+    /**
+     * What this list is a list *of*.
+     *
+     * The screen is the same either way — same rows, same letter jumping, same
+     * download gesture — so the two only part company at the three places that
+     * actually ask the question: which ROMs, what a refresh fetches, and which
+     * folders to check for what the user already has.
+     */
+    private sealed interface Source {
+        data class Platform(val id: Int) : Source
+        data class Collection(val id: Int) : Source
+    }
+
+    private val source: Source =
+        savedStateHandle.get<Int>(Route.RomList.ARG)?.let(Source::Platform)
+            ?: Source.Collection(checkNotNull(savedStateHandle[Route.CollectionRoms.ARG]))
 
     /**
      * Regional copies of one game are folded into a single row.  A No-Intro set
@@ -101,7 +116,10 @@ class RomListViewModel @Inject constructor(
      * reachable from the row's detail screen.
      */
     private val groups: StateFlow<List<RomGroup>> =
-        repo.observeRoms(platformId)
+        when (source) {
+            is Source.Platform   -> repo.observeRoms(source.id)
+            is Source.Collection -> repo.observeCollectionRoms(source.id)
+        }
             .map { roms ->
                 groupRoms(
                     roms             = roms,
@@ -148,16 +166,52 @@ class RomListViewModel @Inject constructor(
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyMap())
 
     /**
-     * What this platform's folder already holds.  One directory listing covers
-     * the whole screen, since every row on it belongs to the same platform.
+     * What the folders behind this list already hold, keyed by platform id.
+     *
+     * A platform list needs exactly one listing.  A collection spans platforms,
+     * so it needs one per platform it actually contains — which is why this is
+     * a map rather than the single [FolderContents] a platform would need: a
+     * row asks about its own platform and gets the right answer either way.
      */
-    val onDevice: StateFlow<FolderContents> = localRoms.revision
-        .mapLatest {
-            val platform = platformDao.getById(platformId)
-            val target   = platform?.let { downloadTargets.resolve(it) }
-            target?.let { localRoms.listing(it) } ?: FolderContents.Unreadable
+    val onDevice: StateFlow<Map<Int, FolderContents>> =
+        when (source) {
+            is Source.Platform -> localRoms.revision.map { listOf(source.id) }
+            // Only the platforms the rows on screen actually belong to.
+            // Resolving every platform in the library would read a directory
+            // per system for a collection of a dozen games.
+            is Source.Collection -> combine(localRoms.revision, groups) { _, rows ->
+                rows.flatMap { group -> group.variants.map { it.platformId } }.distinct()
+            }
         }
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), FolderContents.Unreadable)
+            // The sync writes the collection's ROMs in pages, and the set of
+            // platforms settles long before the last one lands.
+            .distinctUntilChanged()
+            .mapLatest { platformIds ->
+                platformIds.mapNotNull { id ->
+                    val platform = platformDao.getById(id) ?: return@mapNotNull null
+                    val target   = downloadTargets.resolve(platform) ?: return@mapNotNull null
+                    id to localRoms.listing(target)
+                }.toMap()
+            }
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyMap())
+
+    /**
+     * What the bar says this list is.
+     *
+     * Named rather than a flat "ROMs": a collection is two levels down from the
+     * row pinned above the platforms, and without its name there is nothing on
+     * screen to say which one the user opened.
+     */
+    val title: StateFlow<String> = flow {
+        val name = when (source) {
+            is Source.Platform   -> platformDao.getById(source.id)?.displayName
+            is Source.Collection -> repo.getCollection(source.id)?.name
+        }
+        emit(name ?: "ROMs")
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), "ROMs")
+
+    /** True when a row should name its platform — only a collection mixes them. */
+    val mixedPlatforms: Boolean = source is Source.Collection
 
     /** Rows with a long-press in flight; the detail fetch takes a moment. */
     private val _queueing = MutableStateFlow<Set<String>>(emptySet())
@@ -179,7 +233,10 @@ class RomListViewModel @Inject constructor(
             _syncing.value = true
             _error.value   = null
             try {
-                repo.syncRoms(platformId)
+                when (source) {
+                    is Source.Platform   -> repo.syncRoms(source.id)
+                    is Source.Collection -> repo.syncCollectionRoms(source.id)
+                }
             } catch (e: Exception) {
                 _error.value = e.message
             } finally {
@@ -226,13 +283,13 @@ class RomListViewModel @Inject constructor(
 @Composable
 fun RomListScreen(
     viewModel: RomListViewModel,
-    platformId: Int,
     onRomClick: (Int) -> Unit,
     onDownloadsClick: () -> Unit,
     onFolderSettings: () -> Unit,
     onBack: () -> Unit,
 ) {
     val sections by viewModel.sections.collectAsState()
+    val title    by viewModel.title.collectAsState()
     val filter   by viewModel.filter.collectAsState()
     val syncing  by viewModel.syncing.collectAsState()
     val error    by viewModel.error.collectAsState()
@@ -442,7 +499,7 @@ fun RomListScreen(
                             modifier      = Modifier.fillMaxWidth(),
                         )
                     } else {
-                        Text("ROMs")
+                        Text(title, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     }
                 },
                 navigationIcon = {
@@ -524,6 +581,7 @@ fun RomListScreen(
                                     coverUrl    = viewModel.coverUrl(group.primary),
                                     status      = group.downloadStatus(statuses),
                                     onDevice    = group.isOnDevice(onDevice),
+                                    showPlatform = viewModel.mixedPlatforms,
                                     queueing    = group.key in queueing,
                                     onClick     = { onRomClick(group.primary.id) },
                                     onLongClick = {
@@ -562,14 +620,20 @@ private fun RomGroup.downloadStatus(statuses: Map<Int, DownloadStatus>): Downloa
         .minByOrNull { STATUS_PRIORITY.indexOf(it) }
 
 /**
- * True when any copy of this game is already sitting in the ROMs folder.
+ * True when any copy of this game is already sitting in its platform's folder.
  *
  * Independent of the download queue: a library the user filled from a PC, or
  * kept across a reinstall, has no queue rows at all but is very much "already
  * downloaded" from where they are standing.
+ *
+ * Each variant is checked against its own platform's listing, because a
+ * collection's rows do not all live in the same folder.
  */
-private fun RomGroup.isOnDevice(contents: FolderContents): Boolean =
-    contents.readable && variants.any { contents.contains(it.fsName) }
+private fun RomGroup.isOnDevice(byPlatform: Map<Int, FolderContents>): Boolean =
+    variants.any { rom ->
+        val contents = byPlatform[rom.platformId] ?: return@any false
+        contents.readable && contents.contains(rom.fsName)
+    }
 
 /**
  * Filter match against both names a row can be found by: the title it shows,
@@ -616,6 +680,8 @@ private fun RomRow(
     coverUrl: String?,
     status: DownloadStatus?,
     onDevice: Boolean,
+    /** Name the platform on the supporting line — a collection mixes them. */
+    showPlatform: Boolean,
     queueing: Boolean,
     onClick: () -> Unit,
     onLongClick: () -> Unit,
@@ -637,11 +703,17 @@ private fun RomRow(
             // thing that tells the rows apart, so they lead the line.
             // For a single-variant group these are just that ROM's own regions.
             val flags = regionSummary(group.regions)
-            val detail = if (group.hasVariants) {
-                "${group.size} versions"
-            } else {
-                "${rom.fsExtension.uppercase()}  ·  ${rom.fsSizeBytes.formatSize()}"
-            }
+            // On a collection the platform leads what is left, the way the
+            // search results name it: the same game turns up under three
+            // systems and the rows are otherwise identical.
+            val detail = listOfNotNull(
+                rom.platformDisplayName.takeIf { showPlatform && it.isNotBlank() },
+                if (group.hasVariants) {
+                    "${group.size} versions"
+                } else {
+                    "${rom.fsExtension.uppercase()}  ·  ${rom.fsSizeBytes.formatSize()}"
+                },
+            ).joinToString("  ·  ")
             // The score rides on this line rather than taking one of its own:
             // a list of these is scrolled past a screenful at a time, and a
             // third line per row costs more than the number is worth.  The

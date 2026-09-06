@@ -7,7 +7,8 @@ browse platforms, find games, and get them into your emulator's folders. That's 
 ## Features
 
 - Browse platforms and ROM library
-- Search your collection
+- Browse collections — pinned above the platform list, no extra layer of navigation
+- Search your whole library
 - Download ROMs directly to per-platform folders (via Android Storage Access Framework)
 - Offline browse from local cache (Room/SQLite)
 - Incremental sync — only fetches what changed since last sync
@@ -42,7 +43,7 @@ in its own settings swaps them here too.
 ## Non-goals
 
 - Launching games / emulator integration
-- Full RomM frontend (collections, metadata editing, scraping)
+- Full RomM frontend (metadata editing, scraping, virtual/smart collections)
 - Save sync (future)
 
 ## Development

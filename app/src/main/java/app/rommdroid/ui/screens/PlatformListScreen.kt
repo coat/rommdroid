@@ -48,6 +48,17 @@ class PlatformListViewModel @Inject constructor(
         repo.observePlatforms()
             .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
+    /**
+     * How many collections the cache holds.
+     *
+     * The pinned row is drawn only when this is non-zero: a server whose owner
+     * never made a collection would otherwise get a permanent row leading to an
+     * empty screen.
+     */
+    val collectionCount: StateFlow<Int> =
+        repo.observeCollectionCount()
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), 0)
+
     private val _syncing = MutableStateFlow(false)
     val syncing: StateFlow<Boolean> = _syncing.asStateFlow()
 
@@ -62,10 +73,26 @@ class PlatformListViewModel @Inject constructor(
         viewModelScope.launch {
             _syncing.value = true
             _error.value   = null
+            // Both lists live on this screen — the platforms and the row
+            // pinned above them — so one refresh covers both.  They are
+            // fetched apart, though: the collections are a single row, and a
+            // server too old to serve them, or a token minted before this app
+            // asked for collections.read, must not take the platform list down
+            // with it.  The platforms' failure is the one worth reporting when
+            // both fail.
             try {
-                repo.syncPlatforms()
-            } catch (e: Exception) {
-                _error.value = e.message
+                var failure: Exception? = null
+                try {
+                    repo.syncPlatforms()
+                } catch (e: Exception) {
+                    failure = e
+                }
+                try {
+                    repo.syncCollections()
+                } catch (e: Exception) {
+                    if (failure == null) failure = e
+                }
+                _error.value = failure?.message
             } finally {
                 _syncing.value = false
             }
@@ -85,23 +112,49 @@ class PlatformListViewModel @Inject constructor(
 fun PlatformListScreen(
     viewModel: PlatformListViewModel,
     onPlatformClick: (Int) -> Unit,
+    onCollectionsClick: () -> Unit,
     onSearchClick: () -> Unit,
     onDownloadsClick: () -> Unit,
     onSettingsClick: () -> Unit,
 ) {
-    val platforms by viewModel.platforms.collectAsState()
-    val syncing   by viewModel.syncing.collectAsState()
-    val error     by viewModel.error.collectAsState()
+    val platforms   by viewModel.platforms.collectAsState()
+    val collections by viewModel.collectionCount.collectAsState()
+    val syncing     by viewModel.syncing.collectAsState()
+    val error       by viewModel.error.collectAsState()
 
     val listState = rememberLazyListState()
     val scope     = rememberCoroutineScope()
 
     // Which row the controller is on, kept across a trip into a platform so
-    // coming back lands where the user left rather than at the top.
-    var focusedId by rememberSaveable { mutableStateOf<Int?>(null) }
-    val rowFocus  = remember { FocusRequester() }
-    val focusTarget = focusedId ?: platforms.firstOrNull()?.id
-    RestoreFocus(rowFocus, ready = platforms.any { it.id == focusTarget })
+    // coming back lands where the user left rather than at the top.  Keyed by
+    // string rather than by platform id because the pinned Collections row is
+    // one of the rows and has no id of its own.
+    var focusedKey by rememberSaveable { mutableStateOf<String?>(null) }
+    val rowFocus   = remember { FocusRequester() }
+
+    // The whole list, pinned row included, so both kinds of row go through one
+    // `items()` call and share one key space — which is what the controller's
+    // focus memory below remembers a position in.
+    val rows = remember(platforms, collections) {
+        buildList {
+            if (collections > 0) add(PlatformListRow.Collections(collections))
+            platforms.forEach { add(PlatformListRow.Platform(it)) }
+        }
+    }
+    val focusTarget = focusedKey?.takeIf { key -> rows.any { it.key == key } }
+        ?: rows.firstOrNull()?.key
+    RestoreFocus(rowFocus, ready = focusTarget != null)
+
+    // The collections usually land a moment after the platforms, and a row
+    // inserted above what the list is anchored to arrives *off screen*:
+    // LazyColumn holds its position by item key, so the platform that was on
+    // top stays on top and the new row sits just above the viewport.  Bring it
+    // into view — but only for a reader who is still at the top of the list,
+    // never by yanking someone back from halfway down it.
+    val pinned = rows.firstOrNull() is PlatformListRow.Collections
+    LaunchedEffect(pinned) {
+        if (pinned && listState.firstVisibleItemIndex <= 1) listState.scrollToItem(0)
+    }
 
     GamepadHandler { action ->
         when (action) {
@@ -170,15 +223,28 @@ fun PlatformListScreen(
                 }
                 else -> {
                     LazyColumn(state = listState) {
-                        items(platforms, key = { it.id }) { platform ->
-                            PlatformRow(
-                                platform    = platform,
-                                coverUrl    = viewModel.coverUrl(platform),
-                                onClick     = { onPlatformClick(platform.id) },
-                                onFocused   = { focusedId = platform.id },
-                                focusRequester =
-                                    rowFocus.takeIf { platform.id == focusTarget },
-                            )
+                        items(rows, key = { it.key }) { row ->
+                            val requester = rowFocus.takeIf { row.key == focusTarget }
+                            when (row) {
+                                // Pinned above the platforms rather than given
+                                // a level of its own: the collections are a
+                                // second way into the same library, and a tab
+                                // or a drawer for them would cost a press on
+                                // every trip to a platform.
+                                is PlatformListRow.Collections -> CollectionsRow(
+                                    count          = row.count,
+                                    onClick        = onCollectionsClick,
+                                    onFocused      = { focusedKey = row.key },
+                                    focusRequester = requester,
+                                )
+                                is PlatformListRow.Platform -> PlatformRow(
+                                    platform       = row.platform,
+                                    coverUrl       = viewModel.coverUrl(row.platform),
+                                    onClick        = { onPlatformClick(row.platform.id) },
+                                    onFocused      = { focusedKey = row.key },
+                                    focusRequester = requester,
+                                )
+                            }
                             HorizontalDivider()
                         }
                     }
@@ -223,6 +289,62 @@ private fun PlatformRow(
                     modifier           = Modifier.size(40.dp),
                 )
             }
+        },
+    )
+}
+
+/**
+ * One row of the platform list.
+ *
+ * The pinned Collections entry is a row like any other so that both go through
+ * a single `items()` call — which is also what gives them one shared [key]
+ * space for the controller's focus memory to remember a position in.
+ */
+private sealed interface PlatformListRow {
+    val key: String
+
+    data class Collections(val count: Int) : PlatformListRow {
+        override val key get() = "collections"
+    }
+
+    data class Platform(val platform: PlatformEntity) : PlatformListRow {
+        override val key get() = "platform:${platform.id}"
+    }
+}
+
+/**
+ * The way into the collections, sitting above the platforms.
+ *
+ * Drawn like a platform row so the D-pad reads it as one more row in the same
+ * list; the tint and the bookmark are what say it is a way out of this list
+ * rather than the first entry in it.
+ */
+@Composable
+private fun CollectionsRow(
+    count: Int,
+    onClick: () -> Unit,
+    onFocused: () -> Unit,
+    focusRequester: FocusRequester?,
+) {
+    ListItem(
+        modifier = Modifier.gamepadRow(
+            onClick        = onClick,
+            focusRequester = focusRequester,
+            onFocused      = onFocused,
+        ),
+        headlineContent = {
+            Text("Collections", color = MaterialTheme.colorScheme.primary)
+        },
+        supportingContent = {
+            Text(if (count == 1) "1 collection" else "$count collections")
+        },
+        leadingContent = {
+            Icon(
+                imageVector        = Icons.Default.Bookmarks,
+                contentDescription = null,
+                tint               = MaterialTheme.colorScheme.primary,
+                modifier           = Modifier.size(40.dp),
+            )
         },
     )
 }

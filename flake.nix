@@ -6,9 +6,13 @@
     flake-utils.url = "github:numtide/flake-utils";
   };
 
-  outputs = { self, nixpkgs, flake-utils }:
-    flake-utils.lib.eachSystem [ "x86_64-linux" "aarch64-linux" "x86_64-darwin" "aarch64-darwin" ] (system:
-      let
+  outputs = {
+    self,
+    nixpkgs,
+    flake-utils,
+  }:
+    flake-utils.lib.eachSystem ["x86_64-linux" "aarch64-linux" "x86_64-darwin" "aarch64-darwin"] (
+      system: let
         pkgs = import nixpkgs {
           inherit system;
           config = {
@@ -20,12 +24,12 @@
         # ── Android SDK configuration ─────────────────────────────────────────
         # Bump these to upgrade the SDK toolchain; everything else follows.
         androidSdkConfig = {
-          buildToolsVersions = [ "35.0.0" ];
-          platformVersions   = [ "35" ];       # compileSdk / targetSdk
-          abiVersions        = [ "arm64-v8a" "x86_64" ];
-          includeEmulator    = true;
-          includeSystemImages = false;          # set true if you want emulator images
-          systemImageTypes   = [ "google_apis_playstore" ];
+          buildToolsVersions = ["35.0.0"];
+          platformVersions = ["35"]; # compileSdk / targetSdk
+          abiVersions = ["arm64-v8a" "x86_64"];
+          includeEmulator = true;
+          includeSystemImages = false; # set true if you want emulator images
+          systemImageTypes = ["google_apis_playstore"];
           cmdLineToolsVersion = "13.0";
           platformToolsVersion = "37.0.1";
         };
@@ -63,7 +67,7 @@
         # Android Studio is large; include it only when ROMMDROID_WITH_AS=1
         # so `nix develop` stays fast for CI/CLI use.
         # Override: `nix develop .#withStudio`
-        studioInputs = buildInputs ++ [ pkgs.android-studio ];
+        studioInputs = buildInputs ++ [pkgs.android-studio];
 
         # ── Shell hook: point Gradle + SDK at the Nix-managed SDK ────────────
         androidEnvHook = ''
@@ -89,7 +93,6 @@
           echo "  JAVA_HOME        = $JAVA_HOME"
           echo "  gradle $(gradle --version 2>/dev/null | grep '^Gradle' | awk '{print $2}')"
         '';
-
       in {
         # ── devShells ─────────────────────────────────────────────────────────
 
@@ -104,9 +107,11 @@
           # Usage: nix develop .#withStudio
           withStudio = pkgs.mkShell {
             buildInputs = studioInputs;
-            shellHook = androidEnvHook + ''
-              echo "  Android Studio included — launch with: android-studio"
-            '';
+            shellHook =
+              androidEnvHook
+              + ''
+                echo "  Android Studio included — launch with: android-studio"
+              '';
           };
         };
 
@@ -114,7 +119,7 @@
         # Build the debug APK via Gradle
         packages.default = pkgs.stdenv.mkDerivation {
           pname = "rommdroid";
-          version = "0.3.0";
+          version = "0.4.0";
           src = ./.;
 
           buildInputs = buildInputs;

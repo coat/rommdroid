@@ -92,6 +92,44 @@ data class PlatformSchema(
     @SerialName("updated_at")       val updatedAt: String? = null,
 )
 
+// ── Collections ───────────────────────────────────────────────────────────────
+
+/**
+ * A user-made collection: "Favourites", "To Play", whatever they named it.
+ *
+ * `rom_ids` is deliberately not modelled.  It arrives on every collection in
+ * the listing and can run to thousands of ints for a big one, and the app has
+ * no use for bare ids — the membership it stores comes from the ROM fetch,
+ * which is the set it can actually draw.
+ *
+ * Virtual and smart collections come from sibling endpoints and are not
+ * supported: the virtual ones are generated from metadata (genre, franchise,
+ * company) and there are far too many to put in a flat list.
+ */
+@Serializable
+data class CollectionSchema(
+    val id: Int,
+    val name: String,
+    val description: String = "",
+    @SerialName("rom_count")        val romCount: Int = 0,
+    @SerialName("path_cover_small") val pathCoverSmall: String? = null,
+    @SerialName("path_cover_large") val pathCoverLarge: String? = null,
+    /**
+     * Covers of the games in the collection, which is where a collection's
+     * artwork actually comes from: RomM only fills the singular fields above
+     * when someone uploaded a cover of their own, and leaves them null for the
+     * mosaic it builds out of the members otherwise.
+     */
+    @SerialName("path_covers_small") val pathCoversSmall: List<String> = emptyList(),
+    @SerialName("path_covers_large") val pathCoversLarge: List<String> = emptyList(),
+    @SerialName("url_cover")        val urlCover: String? = null,
+    @SerialName("is_favorite")      val isFavorite: Boolean = false,
+    @SerialName("is_public")        val isPublic: Boolean = false,
+    @SerialName("owner_username")   val ownerUsername: String = "",
+    @SerialName("created_at")       val createdAt: String? = null,
+    @SerialName("updated_at")       val updatedAt: String? = null,
+)
+
 // ── ROMs ──────────────────────────────────────────────────────────────────────
 
 @Serializable
