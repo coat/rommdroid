@@ -60,6 +60,7 @@ import app.rommdroid.ui.components.StickScroll
 import app.rommdroid.ui.components.focusOutline
 import app.rommdroid.ui.components.gamepadRow
 import app.rommdroid.ui.components.rememberButtonLayout
+import app.rommdroid.ui.components.rememberHasGamepad
 import app.rommdroid.ui.components.rememberInputFieldHandle
 import app.rommdroid.ui.components.scrollPage
 import app.rommdroid.ui.components.withButton
@@ -895,43 +896,6 @@ fun SettingsScreen(
 
             HorizontalDivider()
 
-            Text(
-                text     = "Controller",
-                style    = MaterialTheme.typography.titleSmall,
-                color    = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 16.dp),
-            )
-
-            Text(
-                // Named by what the buttons do rather than by "Xbox" and
-                // "Nintendo" alone: a handheld set to its own Xbox style is
-                // often still silkscreened the Nintendo way, so the vendor's
-                // word for the mode is the one thing that cannot be trusted
-                // here.  What the user can always check is which button just
-                // opened something.
-                text  = "Which letters the button hints print. Pick whichever matches " +
-                        "your handheld — this only changes the hints, never what the " +
-                        "buttons do.",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 4.dp, bottom = 8.dp),
-            )
-
-            GamepadLayoutChoice(
-                headline   = "A opens, B goes back",
-                supporting = "Xbox and PlayStation lettering",
-                selected   = gamepadLayout == GamepadLayout.Xbox,
-                onSelect   = { viewModel.setGamepadLayout(GamepadLayout.Xbox) },
-            )
-            GamepadLayoutChoice(
-                headline   = "B opens, A goes back",
-                supporting = "Nintendo lettering",
-                selected   = gamepadLayout == GamepadLayout.Nintendo,
-                onSelect   = { viewModel.setGamepadLayout(GamepadLayout.Nintendo) },
-            )
-
-            HorizontalDivider()
-
             ListItem(
                 modifier          = Modifier.gamepadRow(onClick = onFolderMapping),
                 headlineContent   = { Text("Folder Mapping") },
@@ -940,6 +904,48 @@ fun SettingsScreen(
                 trailingContent   = { Icon(Icons.AutoMirrored.Filled.ArrowForward, null) },
             )
             HorizontalDivider()
+
+            // The lettering only ever shows up in the hint bar, and that bar
+            // draws only with a controller attached — so on a phone this whole
+            // section is a choice about something the user cannot see.
+            if (rememberHasGamepad()) {
+                Text(
+                    text     = "Controller",
+                    style    = MaterialTheme.typography.titleSmall,
+                    color    = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 16.dp),
+                )
+
+                Text(
+                    // Named by what the buttons do rather than by "Xbox" and
+                    // "Nintendo" alone: a handheld set to its own Xbox style is
+                    // often still silkscreened the Nintendo way, so the vendor's
+                    // word for the mode is the one thing that cannot be trusted
+                    // here.  What the user can always check is which button just
+                    // opened something.
+                    text  = "Which letters the button hints print. Pick whichever matches " +
+                            "your handheld — this only changes the hints, never what the " +
+                            "buttons do.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 4.dp, bottom = 8.dp),
+                )
+
+                GamepadLayoutChoice(
+                    headline   = "A opens, B goes back",
+                    supporting = "Xbox and PlayStation lettering",
+                    selected   = gamepadLayout == GamepadLayout.Xbox,
+                    onSelect   = { viewModel.setGamepadLayout(GamepadLayout.Xbox) },
+                )
+                GamepadLayoutChoice(
+                    headline   = "B opens, A goes back",
+                    supporting = "Nintendo lettering",
+                    selected   = gamepadLayout == GamepadLayout.Nintendo,
+                    onSelect   = { viewModel.setGamepadLayout(GamepadLayout.Nintendo) },
+                )
+
+                HorizontalDivider()
+            }
 
             ListItem(
                 modifier          = Modifier.gamepadRow(onClick = { showClearCacheDialog = true }),
