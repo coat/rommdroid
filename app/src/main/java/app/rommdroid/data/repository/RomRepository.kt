@@ -223,6 +223,7 @@ class RomRepository @Inject constructor(
         pathCoverSmall        = pathCoverSmall,
         pathCoverLarge        = pathCoverLarge,
         updatedAt             = updatedAt,
+        averageRating         = metadatum.averageRating,
         groupKey              = romGroupKey(platformId, igdbId, slug, fsNameNoTags),
     )
 }

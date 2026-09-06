@@ -27,6 +27,7 @@ import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
@@ -53,6 +54,7 @@ import app.rommdroid.ui.components.GamepadHandler
 import app.rommdroid.ui.components.GamepadHint
 import app.rommdroid.ui.components.GamepadHintBar
 import app.rommdroid.ui.components.OutlinedInputField
+import app.rommdroid.ui.components.RatingBadge
 import app.rommdroid.ui.components.RestoreFocus
 import app.rommdroid.ui.components.StickScroll
 import app.rommdroid.ui.components.focusOutline
@@ -640,7 +642,33 @@ private fun RomRow(
             } else {
                 "${rom.fsExtension.uppercase()}  ·  ${rom.fsSizeBytes.formatSize()}"
             }
-            Text(if (flags.isEmpty()) detail else "$flags  ·  $detail")
+            // The score rides on this line rather than taking one of its own:
+            // a list of these is scrolled past a screenful at a time, and a
+            // third line per row costs more than the number is worth.  The
+            // text yields to the pill instead of pushing it off a narrow
+            // screen — the flags and size are still legible truncated.
+            //
+            // Both sit on one baseline because Material3 reads a supporting
+            // slot whose first and last baseline differ as wrapped text, and
+            // grows every row to the taller three-line item to fit it.  That
+            // is also where the pill wants to be: level with the line it
+            // annotates rather than centred against it.
+            Row {
+                Text(
+                    if (flags.isEmpty()) detail else "$flags  ·  $detail",
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.alignByBaseline().weight(1f, fill = false),
+                )
+                group.rating?.let { rating ->
+                    Spacer(Modifier.width(8.dp))
+                    RatingBadge(
+                        rating,
+                        compact  = true,
+                        modifier = Modifier.alignByBaseline(),
+                    )
+                }
+            }
         },
         leadingContent = {
             if (coverUrl != null) {
