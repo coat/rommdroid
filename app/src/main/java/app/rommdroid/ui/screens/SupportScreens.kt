@@ -421,8 +421,13 @@ private fun DownloadItem.statusLine(): String = when (status) {
 class SettingsViewModel @Inject constructor(
     private val credentials: CredentialRepository,
 ) : ViewModel() {
-    val serverUrl: String get() = credentials.serverUrl ?: "(not set)"
-    val username: String  get() = credentials.username  ?: "(not set)"
+    /**
+     * Read on every composition rather than cached, so editing the connection
+     * and coming back shows what was saved — EncryptedSharedPreferences has no
+     * change stream to observe, and the read is a cheap one.
+     */
+    val serverUrl: String get() = credentials.serverUrl?.takeIf { it.isNotBlank() } ?: "(not set)"
+    val username: String  get() = credentials.username?.takeIf { it.isNotBlank() }  ?: "(not set)"
 
     /** Clears all stored credentials and server config. */
     fun disconnect() {
@@ -434,6 +439,7 @@ class SettingsViewModel @Inject constructor(
 @Composable
 fun SettingsScreen(
     viewModel: SettingsViewModel,
+    onEditConnection: () -> Unit,
     onFolderMapping: () -> Unit,
     onResetSetup: () -> Unit,
     onBack: () -> Unit,
@@ -455,17 +461,21 @@ fun SettingsScreen(
         LazyColumn(Modifier.fillMaxSize().padding(padding)) {
             item {
                 ListItem(
+                    modifier          = Modifier.clickable(onClick = onEditConnection),
                     headlineContent   = { Text("Server") },
                     supportingContent = { Text(viewModel.serverUrl) },
                     leadingContent    = { Icon(Icons.Default.Dns, null) },
+                    trailingContent   = { Icon(Icons.AutoMirrored.Filled.ArrowForward, null) },
                 )
                 HorizontalDivider()
             }
             item {
                 ListItem(
+                    modifier          = Modifier.clickable(onClick = onEditConnection),
                     headlineContent   = { Text("Account") },
                     supportingContent = { Text(viewModel.username) },
                     leadingContent    = { Icon(Icons.Default.Person, null) },
+                    trailingContent   = { Icon(Icons.AutoMirrored.Filled.ArrowForward, null) },
                 )
                 HorizontalDivider()
             }

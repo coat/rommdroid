@@ -92,6 +92,31 @@ class CredentialRepository @Inject constructor(
         prefs.edit().remove(KEY_PASSWORD).apply()
     }
 
+    // ── Snapshot / restore ────────────────────────────────────────────────────
+
+    /** Everything this repository stores, as one value. See [snapshot]. */
+    data class Snapshot(
+        val serverUrl: String?,
+        val apiToken: String?,
+        val username: String?,
+        val password: String?,
+    )
+
+    /**
+     * Takes a copy of the stored credentials so a failed re-connect can put them
+     * back.  Signing in writes as it goes — URL first, so the interceptors point
+     * at the new server for the verification requests — and a wrong password or
+     * an unreachable host must not cost the user the connection they had.
+     */
+    fun snapshot(): Snapshot = Snapshot(serverUrl, apiToken, username, password)
+
+    fun restore(snapshot: Snapshot) {
+        serverUrl = snapshot.serverUrl
+        apiToken  = snapshot.apiToken
+        username  = snapshot.username
+        password  = snapshot.password
+    }
+
     /**
      * Wipes all stored credentials.
      * Used by "Disconnect / Change server" in Settings.
