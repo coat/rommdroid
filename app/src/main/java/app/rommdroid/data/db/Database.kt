@@ -107,12 +107,23 @@ interface PlatformDao {
     suspend fun deleteAll()
 }
 
+private const val ROMS_BY_PLATFORM =
+    "SELECT * FROM roms WHERE platformId = :platformId " +
+        "ORDER BY COALESCE(NULLIF(name, ''), fsNameNoTags) COLLATE NOCASE ASC"
+
 @Dao
 interface RomDao {
-    @Query("SELECT * FROM roms WHERE platformId = :platformId ORDER BY name ASC")
+    /**
+     * Sorted on the name the list actually draws, which is the filename for
+     * every ROM the server never identified — ordering on `name` alone piles
+     * those at the top of the list under a NULL that sorts before everything.
+     * NOCASE because SQLite's default TEXT ordering is by byte, which files a
+     * lowercase title after every uppercase one.
+     */
+    @Query(ROMS_BY_PLATFORM)
     fun observeByPlatform(platformId: Int): Flow<List<RomEntity>>
 
-    @Query("SELECT * FROM roms WHERE platformId = :platformId ORDER BY name ASC")
+    @Query(ROMS_BY_PLATFORM)
     suspend fun getByPlatform(platformId: Int): List<RomEntity>
 
     @Query("""

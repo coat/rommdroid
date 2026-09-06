@@ -1,25 +1,32 @@
 package app.rommdroid.ui.screens
 
+import android.view.inputmethod.EditorInfo
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.ErrorOutline
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Schedule
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.VideogameAsset
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
@@ -39,13 +46,18 @@ import app.rommdroid.data.download.asMessage
 import app.rommdroid.data.repository.CredentialRepository
 import app.rommdroid.data.repository.DownloadTargetRepository
 import app.rommdroid.data.repository.RomRepository
+import app.rommdroid.ui.components.OutlinedInputField
+import app.rommdroid.ui.components.rememberInputFieldHandle
 import app.rommdroid.ui.navigation.Route
 import app.rommdroid.util.RomGroup
+import app.rommdroid.util.RomSection
 import app.rommdroid.util.artworkUrl
+import app.rommdroid.util.displayName
 import app.rommdroid.util.formatSize
 import app.rommdroid.util.groupRoms
 import app.rommdroid.util.regionPreference
 import app.rommdroid.util.regionSummary
+import app.rommdroid.util.sectionsOf
 import kotlinx.coroutines.Dispatchers
 import java.util.Locale
 import javax.inject.Inject
@@ -72,7 +84,7 @@ class RomListViewModel @Inject constructor(
      * identical names, which is unreadable at list scale; the variants stay
      * reachable from the row's detail screen.
      */
-    val groups: StateFlow<List<RomGroup>> =
+    private val groups: StateFlow<List<RomGroup>> =
         repo.observeRoms(platformId)
             .map { roms ->
                 groupRoms(
@@ -85,6 +97,35 @@ class RomListViewModel @Inject constructor(
             // every time the sync writes a page.
             .flowOn(Dispatchers.Default)
             .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    /** Text typed into the list's filter field; blank shows the whole platform. */
+    private val _filter = MutableStateFlow("")
+    val filter: StateFlow<String> = _filter.asStateFlow()
+
+    fun setFilter(text: String) { _filter.value = text }
+
+    /**
+     * The rows as the screen draws them: the filter applied, then cut into the
+     * letter runs the sticky headers sit on.
+     *
+     * A filtered list comes back as one unlabelled run.  Headers earn their
+     * space on a list of hundreds, where they are the only sign of where a
+     * flick landed; over a dozen matches they would only be a row of letters
+     * with a game under each.
+     */
+    val sections: StateFlow<List<RomSection>> = combine(groups, _filter) { rows, filter ->
+        val needle  = filter.trim()
+        val matches = if (needle.isEmpty()) rows else rows.filter { it.matches(needle) }
+        when {
+            needle.isEmpty()  -> sectionsOf(matches)
+            matches.isEmpty() -> emptyList()
+            else              -> listOf(RomSection(label = null, groups = matches))
+        }
+    }
+        // Same reason as the fold above: a platform can hold a few thousand
+        // rows, and this runs again on every keystroke.
+        .flowOn(Dispatchers.Default)
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
     /** Download state per ROM id, so a row can show what the user already has. */
     val downloadStatus: StateFlow<Map<Int, DownloadStatus>> = queue.statusByRom
@@ -165,7 +206,7 @@ class RomListViewModel @Inject constructor(
 
 // ── Screen ────────────────────────────────────────────────────────────────────
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
 fun RomListScreen(
     viewModel: RomListViewModel,
@@ -175,7 +216,8 @@ fun RomListScreen(
     onFolderSettings: () -> Unit,
     onBack: () -> Unit,
 ) {
-    val groups   by viewModel.groups.collectAsState()
+    val sections by viewModel.sections.collectAsState()
+    val filter   by viewModel.filter.collectAsState()
     val syncing  by viewModel.syncing.collectAsState()
     val error    by viewModel.error.collectAsState()
     val statuses by viewModel.downloadStatus.collectAsState()
@@ -184,6 +226,38 @@ fun RomListScreen(
 
     val snackbarHostState = remember { SnackbarHostState() }
     val haptics = LocalHapticFeedback.current
+
+    // The filter field replaces the title rather than sitting under it: on a
+    // handheld in landscape the bar plus a second row of chrome is most of the
+    // list's height.
+    var filtering by rememberSaveable { mutableStateOf(false) }
+    val filterField = rememberInputFieldHandle()
+    val listState   = rememberLazyListState()
+
+    LaunchedEffect(filtering) { if (filtering) filterField.requestFocus() }
+
+    // Every keystroke narrows the list underneath; keeping the old scroll
+    // offset would leave the user somewhere in the middle of the matches, or
+    // past the end of them entirely.  Only on a real change, though — a
+    // rotation re-runs the effect with the filter it already had, and the
+    // list state it restored is the one worth keeping.
+    var scrolledFor by rememberSaveable { mutableStateOf(filter) }
+    LaunchedEffect(filter) {
+        if (scrolledFor != filter) {
+            scrolledFor = filter
+            listState.scrollToItem(0)
+        }
+    }
+
+    fun closeFilter() {
+        filterField.hideKeyboard()
+        viewModel.setFilter("")
+        filtering = false
+    }
+
+    // Back closes the field before it leaves the screen — the same thing the
+    // X in its place does, and what the gesture means everywhere else.
+    BackHandler(enabled = filtering) { closeFilter() }
 
     // Sync failures share the queue's snackbar host rather than stacking a
     // second one on top of it.
@@ -220,18 +294,46 @@ fun RomListScreen(
         snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
             TopAppBar(
-                title = { Text("ROMs") },
-                navigationIcon = {
-                    IconButton(onClick = onBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                title = {
+                    if (filtering) {
+                        // Matches narrow as the text is typed, so the Search
+                        // key has nothing to submit and only puts the keyboard
+                        // away — same as the global search field.
+                        OutlinedInputField(
+                            value         = filter,
+                            onValueChange = viewModel::setFilter,
+                            placeholder   = "Filter ROMs…",
+                            imeAction     = EditorInfo.IME_ACTION_SEARCH,
+                            handle        = filterField,
+                            onImeAction   = { filterField.hideKeyboard() },
+                            modifier      = Modifier.fillMaxWidth(),
+                        )
+                    } else {
+                        Text("ROMs")
                     }
                 },
-                actions = {
-                    IconButton(onClick = onDownloadsClick) {
-                        Icon(Icons.Default.Download, contentDescription = "Downloads")
+                navigationIcon = {
+                    IconButton(onClick = { if (filtering) closeFilter() else onBack() }) {
+                        if (filtering) {
+                            Icon(Icons.Default.Close, contentDescription = "Clear filter")
+                        } else {
+                            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                        }
                     }
-                    IconButton(onClick = { viewModel.refresh() }) {
-                        Icon(Icons.Default.Refresh, contentDescription = "Refresh")
+                },
+                // The field needs the whole bar, and neither action means
+                // anything while the user is halfway through typing a name.
+                actions = {
+                    if (!filtering) {
+                        IconButton(onClick = { filtering = true }) {
+                            Icon(Icons.Default.Search, contentDescription = "Filter ROMs")
+                        }
+                        IconButton(onClick = onDownloadsClick) {
+                            Icon(Icons.Default.Download, contentDescription = "Downloads")
+                        }
+                        IconButton(onClick = { viewModel.refresh() }) {
+                            Icon(Icons.Default.Refresh, contentDescription = "Refresh")
+                        }
                     }
                 }
             )
@@ -239,25 +341,41 @@ fun RomListScreen(
     ) { padding ->
         Box(Modifier.fillMaxSize().padding(padding)) {
             when {
-                syncing && groups.isEmpty() -> {
+                syncing && sections.isEmpty() && filter.isBlank() -> {
                     CircularProgressIndicator(Modifier.align(Alignment.Center))
                 }
+                sections.isEmpty() && filter.isNotBlank() -> {
+                    Text(
+                        text      = "No ROMs match “${filter.trim()}”.",
+                        style     = MaterialTheme.typography.bodyMedium,
+                        color     = MaterialTheme.colorScheme.onSurfaceVariant,
+                        textAlign = TextAlign.Center,
+                        modifier  = Modifier.align(Alignment.Center).padding(32.dp),
+                    )
+                }
                 else -> {
-                    LazyColumn {
-                        items(groups, key = { it.key }) { group ->
-                            RomRow(
-                                group       = group,
-                                coverUrl    = viewModel.coverUrl(group.primary),
-                                status      = group.downloadStatus(statuses),
-                                onDevice    = group.isOnDevice(onDevice),
-                                queueing    = group.key in queueing,
-                                onClick     = { onRomClick(group.primary.id) },
-                                onLongClick = {
-                                    haptics.performHapticFeedback(HapticFeedbackType.LongPress)
-                                    viewModel.download(group)
-                                },
-                            )
-                            HorizontalDivider()
+                    LazyColumn(state = listState) {
+                        sections.forEach { section ->
+                            // Sticky until the next letter pushes it off, so the
+                            // header stays readable through a long flick.
+                            section.label?.let { label ->
+                                stickyHeader(key = "section:$label") { SectionHeader(label) }
+                            }
+                            items(section.groups, key = { it.key }) { group ->
+                                RomRow(
+                                    group       = group,
+                                    coverUrl    = viewModel.coverUrl(group.primary),
+                                    status      = group.downloadStatus(statuses),
+                                    onDevice    = group.isOnDevice(onDevice),
+                                    queueing    = group.key in queueing,
+                                    onClick     = { onRomClick(group.primary.id) },
+                                    onLongClick = {
+                                        haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                                        viewModel.download(group)
+                                    },
+                                )
+                                HorizontalDivider()
+                            }
                         }
                     }
                     if (syncing) {
@@ -289,6 +407,15 @@ private fun RomGroup.downloadStatus(statuses: Map<Int, DownloadStatus>): Downloa
 private fun RomGroup.isOnDevice(contents: FolderContents): Boolean =
     contents.readable && variants.any { contents.contains(it.fsName) }
 
+/**
+ * Filter match against both names a row can be found by: the title it shows,
+ * and the filename underneath it — a user hunting "sonic2" is typing what the
+ * file is called, not what the game is called.
+ */
+private fun RomGroup.matches(needle: String): Boolean =
+    primary.displayName.contains(needle, ignoreCase = true) ||
+        primary.fsNameNoTags.contains(needle, ignoreCase = true)
+
 private val STATUS_PRIORITY = listOf(
     DownloadStatus.RUNNING,
     DownloadStatus.QUEUED,
@@ -296,6 +423,27 @@ private val STATUS_PRIORITY = listOf(
     DownloadStatus.SUCCEEDED,
     DownloadStatus.CANCELLED,
 )
+
+/**
+ * The letter a run of rows sits under.
+ *
+ * Opaque on purpose: a sticky header has the list scrolling underneath it, and
+ * a transparent one would have two titles drawn over each other.
+ */
+@Composable
+private fun SectionHeader(label: String) {
+    Surface(
+        color    = MaterialTheme.colorScheme.surfaceContainerHigh,
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Text(
+            text     = label,
+            style    = MaterialTheme.typography.titleSmall,
+            color    = MaterialTheme.colorScheme.primary,
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
+        )
+    }
+}
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
@@ -315,7 +463,7 @@ private fun RomRow(
             onLongClick      = onLongClick,
             onLongClickLabel = "Download",
         ),
-        headlineContent  = { Text(rom.name ?: rom.fsNameNoTags) },
+        headlineContent  = { Text(rom.displayName) },
         supportingContent = {
             // Flags first: when a game has several copies they are the only
             // thing that tells the rows apart, so they lead the line.
