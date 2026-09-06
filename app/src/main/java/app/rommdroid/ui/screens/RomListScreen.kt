@@ -4,6 +4,7 @@ import android.view.inputmethod.EditorInfo
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -26,6 +27,13 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.SavedStateHandle
@@ -46,6 +54,7 @@ import app.rommdroid.data.download.asMessage
 import app.rommdroid.data.repository.CredentialRepository
 import app.rommdroid.data.repository.DownloadTargetRepository
 import app.rommdroid.data.repository.RomRepository
+import app.rommdroid.ui.components.FastScroller
 import app.rommdroid.ui.components.OutlinedInputField
 import app.rommdroid.ui.components.rememberInputFieldHandle
 import app.rommdroid.ui.navigation.Route
@@ -57,6 +66,7 @@ import app.rommdroid.util.formatSize
 import app.rommdroid.util.groupRoms
 import app.rommdroid.util.regionPreference
 import app.rommdroid.util.regionSummary
+import app.rommdroid.util.sectionIndexOf
 import app.rommdroid.util.sectionsOf
 import kotlinx.coroutines.Dispatchers
 import java.util.Locale
@@ -233,6 +243,19 @@ fun RomListScreen(
     var filtering by rememberSaveable { mutableStateOf(false) }
     val filterField = rememberInputFieldHandle()
     val listState   = rememberLazyListState()
+    val scope       = rememberCoroutineScope()
+
+    // Where every letter starts, shared by the two ways of jumping to one: the
+    // scroller's bubble reads it, the shoulder buttons step through it.
+    val sectionIndex = remember(sections) { sectionIndexOf(sections) }
+
+    // The shoulder buttons are key events, and key events go to whatever holds
+    // focus — so the list has to hold it.  Not while the filter is open: the
+    // field wants those keystrokes.
+    val listFocus = remember { FocusRequester() }
+    LaunchedEffect(filtering) {
+        if (!filtering) runCatching { listFocus.requestFocus() }
+    }
 
     LaunchedEffect(filtering) { if (filtering) filterField.requestFocus() }
 
@@ -258,6 +281,25 @@ fun RomListScreen(
     // Back closes the field before it leaves the screen — the same thing the
     // X in its place does, and what the gesture means everywhere else.
     BackHandler(enabled = filtering) { closeFilter() }
+
+    /**
+     * L1 and R1 step a letter at a time.
+     *
+     * This is a handheld with shoulder buttons and no second hand free for the
+     * scroller — a press per letter is the cheapest jump on the device, and it
+     * lands on the header so the letter is on screen when it stops.
+     */
+    fun onShoulderKey(key: Key): Boolean {
+        val target = when (key) {
+            Key.ButtonL1 -> sectionIndex.startBefore(listState.firstVisibleItemIndex)
+            Key.ButtonR1 -> sectionIndex.startAfter(listState.firstVisibleItemIndex)
+            else         -> return false
+        }
+        // Consume either way: at the ends of the list the button does nothing
+        // rather than falling through to whatever else might take it.
+        target?.let { scope.launch { listState.scrollToItem(it) } }
+        return true
+    }
 
     // Sync failures share the queue's snackbar host rather than stacking a
     // second one on top of it.
@@ -339,7 +381,18 @@ fun RomListScreen(
             )
         }
     ) { padding ->
-        Box(Modifier.fillMaxSize().padding(padding)) {
+        Box(
+            Modifier
+                .fillMaxSize()
+                .padding(padding)
+                .onKeyEvent { event ->
+                    event.type == KeyEventType.KeyDown &&
+                        !sectionIndex.isEmpty &&
+                        onShoulderKey(event.key)
+                }
+                .focusRequester(listFocus)
+                .focusable()
+        ) {
             when {
                 syncing && sections.isEmpty() && filter.isBlank() -> {
                     CircularProgressIndicator(Modifier.align(Alignment.Center))
@@ -378,6 +431,11 @@ fun RomListScreen(
                             }
                         }
                     }
+                    FastScroller(
+                        state    = listState,
+                        index    = sectionIndex,
+                        modifier = Modifier.align(Alignment.CenterEnd),
+                    )
                     if (syncing) {
                         LinearProgressIndicator(
                             modifier = Modifier.fillMaxWidth().align(Alignment.TopCenter)

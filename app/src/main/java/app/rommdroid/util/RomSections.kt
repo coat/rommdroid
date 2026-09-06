@@ -60,3 +60,56 @@ private fun asciiLetter(c: Char): Char? {
 fun sectionsOf(groups: List<RomGroup>): List<RomSection> =
     groups.groupBy { sectionLabel(it.primary.displayName) }
         .map { (label, rows) -> RomSection(label, rows) }
+
+/**
+ * Where each section begins once the list is laid out.
+ *
+ * Turns a scroll position back into a letter — what the fast scroller's bubble
+ * shows — and a letter back into a scroll position, which is how the shoulder
+ * buttons jump.  Item indices count the headers too, since [LazyColumn] gives
+ * each one a slot of its own.
+ */
+class SectionIndex internal constructor(
+    private val starts: List<Int>,
+    private val labels: List<String>,
+) {
+    val isEmpty: Boolean get() = starts.isEmpty()
+
+    /** The section [itemIndex] falls in, or null if it sits above the first. */
+    fun labelAt(itemIndex: Int): String? =
+        starts.indexOfLast { it <= itemIndex }.takeIf { it >= 0 }?.let(labels::get)
+
+    /** First section starting after [itemIndex]; null at the end of the list. */
+    fun startAfter(itemIndex: Int): Int? = starts.firstOrNull { it > itemIndex }
+
+    /**
+     * Last section starting before [itemIndex]; null at the top.
+     *
+     * Strictly before, so a press from the middle of a section lands on that
+     * section's own header first and only then walks back — the same as a
+     * "previous track" button.
+     */
+    fun startBefore(itemIndex: Int): Int? = starts.lastOrNull { it < itemIndex }
+}
+
+/**
+ * Index [sections] as they will be laid out: a header item, then its rows.
+ *
+ * An unlabelled run — the filtered list — contributes no header and no entry,
+ * so a filtered list indexes to nothing and the jumping affordances take
+ * themselves off screen.
+ */
+fun sectionIndexOf(sections: List<RomSection>): SectionIndex {
+    val starts = mutableListOf<Int>()
+    val labels = mutableListOf<String>()
+    var itemIndex = 0
+    for (section in sections) {
+        section.label?.let { label ->
+            starts += itemIndex
+            labels += label
+            itemIndex++
+        }
+        itemIndex += section.groups.size
+    }
+    return SectionIndex(starts, labels)
+}
