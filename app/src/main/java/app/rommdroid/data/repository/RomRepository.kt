@@ -1,6 +1,7 @@
 package app.rommdroid.data.repository
 
 import app.rommdroid.data.api.RomMApi
+import app.rommdroid.data.api.model.CollectionSchema
 import app.rommdroid.data.api.model.DetailedRomSchema
 import app.rommdroid.data.api.model.PlatformSchema
 import app.rommdroid.data.api.model.SimpleRomSchema
@@ -20,6 +21,7 @@ class RomRepository @Inject constructor(
     private val api: RomMApi,
     private val platformDao: PlatformDao,
     private val romDao: RomDao,
+    private val collectionDao: CollectionDao,
     private val json: Json,
 ) {
 
@@ -70,6 +72,7 @@ class RomRepository @Inject constructor(
     suspend fun clearLibraryCache() {
         platformDao.deleteAll()
         romDao.deleteAll()
+        collectionDao.deleteAll()
     }
 
     // ── ROMs ──────────────────────────────────────────────────────────────────
@@ -142,6 +145,70 @@ class RomRepository @Inject constructor(
     /** Offline fallback — only covers platforms that have been synced. */
     suspend fun searchLocal(query: String): List<RomEntity> = romDao.search(query)
 
+    // ── Collections ───────────────────────────────────────────────────────────
+
+    fun observeCollections(): Flow<List<CollectionEntity>> = collectionDao.observeAll()
+
+    /** Non-zero is the platform list's cue to pin its Collections row. */
+    fun observeCollectionCount(): Flow<Int> = collectionDao.observeCount()
+
+    fun observeCollectionRoms(collectionId: Int): Flow<List<RomEntity>> =
+        collectionDao.observeRoms(collectionId)
+
+    suspend fun getCollection(id: Int): CollectionEntity? = collectionDao.getById(id)
+
+    /**
+     * Refresh the cached collections.
+     *
+     * Always a full listing — a user has a handful of collections, not the
+     * thousands of ROMs that make an incremental platform sync worth it — and
+     * so it prunes what the server no longer has, with the same guard
+     * [syncPlatforms] documents: an empty response is treated as a server that
+     * answered oddly, not as a library with nothing in it.
+     */
+    suspend fun syncCollections() {
+        val remote = api.getCollections().map { it.toEntity() }
+        if (remote.isNotEmpty()) {
+            collectionDao.reconcile(remote)
+        } else {
+            collectionDao.upsertAll(remote)
+        }
+    }
+
+    /**
+     * Fetch what is in one collection, paging exactly as [syncRoms] does and
+     * for the same reasons — every page collected before anything is written.
+     *
+     * The ROM rows are upserted rather than swapped: they belong to their
+     * platforms, not to this collection, and a platform's own sync is what
+     * owns the question of which of its ROMs still exist.  Only the membership
+     * is replaced, so a game taken out of the collection on the server leaves
+     * the list here too.
+     */
+    suspend fun syncCollectionRoms(collectionId: Int) {
+        val fetched = mutableListOf<RomEntity>()
+        var offset = 0
+        val pageSize = 100
+        do {
+            val page = api.getRoms(
+                collectionId     = collectionId,
+                limit            = pageSize,
+                offset           = offset,
+                withCharIndex    = false,
+                withRomIdIndex   = false,
+                withFilterValues = false,
+            )
+            fetched += page.items.map { it.toEntity() }
+            offset += pageSize
+        } while (offset < page.total)
+
+        romDao.upsertAll(fetched)
+        collectionDao.replaceMembership(
+            collectionId = collectionId,
+            rows         = fetched.map { CollectionRomEntity(collectionId, it.id) },
+        )
+    }
+
     // ── Regional variants ─────────────────────────────────────────────────────
 
     /**
@@ -200,6 +267,24 @@ class RomRepository @Inject constructor(
         romCount    = romCount,
         urlLogo     = urlLogo,
         updatedAt   = updatedAt,
+    )
+
+    private fun CollectionSchema.toEntity() = CollectionEntity(
+        id             = id,
+        // Scraped and hand-typed copy alike arrives HTML-escaped, same as a
+        // ROM's name does.
+        name           = name.decodeHtmlEntities(),
+        description    = description.decodeHtmlEntities(),
+        romCount       = romCount,
+        // The member covers stand in for a collection that has none of its
+        // own, which is every collection nobody uploaded artwork for.
+        pathCoverSmall = pathCoverSmall ?: pathCoversSmall.firstOrNull(),
+        pathCoverLarge = pathCoverLarge ?: pathCoversLarge.firstOrNull(),
+        urlCover       = urlCover?.takeIf { it.isNotBlank() },
+        isFavorite     = isFavorite,
+        isPublic       = isPublic,
+        ownerUsername  = ownerUsername,
+        updatedAt      = updatedAt,
     )
 
     private fun SimpleRomSchema.toEntity() = RomEntity(

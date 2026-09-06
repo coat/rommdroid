@@ -35,6 +35,7 @@ object DatabaseModule {
 
     @Provides fun providePlatformDao(db: AppDatabase): PlatformDao = db.platformDao()
     @Provides fun provideRomDao(db: AppDatabase): RomDao = db.romDao()
+    @Provides fun provideCollectionDao(db: AppDatabase): CollectionDao = db.collectionDao()
     @Provides fun providePlatformFolderDao(db: AppDatabase): PlatformFolderDao = db.platformFolderDao()
     @Provides fun provideBaseFolderDao(db: AppDatabase): BaseFolderDao = db.baseFolderDao()
     @Provides fun providePlatformSubfolderDao(db: AppDatabase): PlatformSubfolderDao = db.platformSubfolderDao()

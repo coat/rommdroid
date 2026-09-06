@@ -74,6 +74,7 @@ fun RomMDroidNavHost() {
                 onPlatformClick  = { platformId ->
                     navController.navigate(Route.RomList.go(platformId))
                 },
+                onCollectionsClick = { navController.navigate(Route.CollectionList.path) },
                 onSearchClick    = { navController.navigate(Route.Search.path) },
                 onDownloadsClick = { navController.navigate(Route.Downloads.path) },
                 onSettingsClick  = { navController.navigate(Route.Settings.path) },
@@ -84,11 +85,33 @@ fun RomMDroidNavHost() {
         composable(
             route     = Route.RomList.TEMPLATE,
             arguments = listOf(navArgument(Route.RomList.ARG) { type = NavType.IntType }),
-        ) { backStack ->
-            val platformId = backStack.arguments?.getInt(Route.RomList.ARG) ?: return@composable
+        ) {
             RomListScreen(
                 viewModel        = hiltViewModel(),
-                platformId       = platformId,
+                onRomClick       = { romId -> navController.navigate(Route.RomDetail.go(romId)) },
+                onDownloadsClick = { navController.navigate(Route.Downloads.path) },
+                onFolderSettings = { navController.navigate(Route.FolderMapping.path) },
+                onBack           = { navController.popBackStack() },
+            )
+        }
+
+        // ── Collections ───────────────────────────────────────────────────────
+        composable(Route.CollectionList.path) {
+            CollectionListScreen(
+                viewModel         = hiltViewModel(),
+                onCollectionClick = { id -> navController.navigate(Route.CollectionRoms.go(id)) },
+                onBack            = { navController.popBackStack() },
+            )
+        }
+
+        // A collection's ROMs are the same screen a platform's are — only the
+        // argument differs, and [RomListViewModel] reads whichever it was given.
+        composable(
+            route     = Route.CollectionRoms.TEMPLATE,
+            arguments = listOf(navArgument(Route.CollectionRoms.ARG) { type = NavType.IntType }),
+        ) {
+            RomListScreen(
+                viewModel        = hiltViewModel(),
                 onRomClick       = { romId -> navController.navigate(Route.RomDetail.go(romId)) },
                 onDownloadsClick = { navController.navigate(Route.Downloads.path) },
                 onFolderSettings = { navController.navigate(Route.FolderMapping.path) },

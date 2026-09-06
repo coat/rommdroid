@@ -107,5 +107,49 @@ val MIGRATION_4_5 = object : Migration(4, 5) {
     }
 }
 
+/**
+ * Adds the collections cache and the ROMs that belong to each.
+ *
+ * Both tables start empty and fill themselves on the next sync: the platform
+ * list syncs collections alongside platforms, and a collection's membership is
+ * fetched the first time it is opened.  There is nothing to backfill — none of
+ * this existed locally before.
+ */
+val MIGRATION_5_6 = object : Migration(5, 6) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS `collections` (
+                `id` INTEGER NOT NULL,
+                `name` TEXT NOT NULL,
+                `description` TEXT NOT NULL,
+                `romCount` INTEGER NOT NULL,
+                `pathCoverSmall` TEXT,
+                `pathCoverLarge` TEXT,
+                `urlCover` TEXT,
+                `isFavorite` INTEGER NOT NULL,
+                `isPublic` INTEGER NOT NULL,
+                `ownerUsername` TEXT NOT NULL,
+                `updatedAt` TEXT,
+                PRIMARY KEY(`id`)
+            )
+            """.trimIndent()
+        )
+        db.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS `collection_roms` (
+                `collectionId` INTEGER NOT NULL,
+                `romId` INTEGER NOT NULL,
+                PRIMARY KEY(`collectionId`, `romId`)
+            )
+            """.trimIndent()
+        )
+        db.execSQL(
+            "CREATE INDEX IF NOT EXISTS `index_collection_roms_romId` ON `collection_roms` (`romId`)"
+        )
+    }
+}
+
 /** Every migration, in the order the versions shipped. */
-val ALL_MIGRATIONS = arrayOf(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5)
+val ALL_MIGRATIONS =
+    arrayOf(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6)
