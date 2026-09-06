@@ -1,15 +1,17 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  Allows cleartext HTTP to local network addresses (e.g. romm.local, 192.168.x.x).
-  Production traffic to public servers should use HTTPS.
+  RomM is self-hosted, and the address of the server is whatever the user typed
+  on the setup screen: a LAN IP, an mDNS name, a Tailscale address, a hostname
+  from their own DNS.  Nothing here can enumerate that set ahead of time — and
+  <domain> could not express it anyway, being a hostname suffix matcher with no
+  notion of a subnet.  Listing "192.168.0.0/16" only ever matched a host
+  literally named that, which is why a plain http://192.168.0.2 was refused
+  while http://romm.local (a suffix match on "local") went through.
+
+  So cleartext is permitted outright.  The alternative is refusing to talk to
+  the server most users actually run, and TLS is not something a box on the
+  living-room LAN generally has.
 -->
 <network-security-config>
-    <domain-config cleartextTrafficPermitted="true">
-        <!-- Local mDNS names -->
-        <domain includeSubdomains="true">local</domain>
-        <!-- Private IPv4 ranges -->
-        <domain includeSubdomains="true">10.0.0.0/8</domain>
-        <domain includeSubdomains="true">172.16.0.0/12</domain>
-        <domain includeSubdomains="true">192.168.0.0/16</domain>
-    </domain-config>
+    <base-config cleartextTrafficPermitted="true" />
 </network-security-config>
