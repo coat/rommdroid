@@ -29,8 +29,10 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.FlowPreview
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import app.rommdroid.data.db.BaseFolderDao
 import app.rommdroid.data.db.BaseFolderEntity
 import app.rommdroid.data.db.PlatformEntity
@@ -449,6 +451,7 @@ sealed interface ConnectionState {
 class SettingsViewModel @Inject constructor(
     private val credentials: CredentialRepository,
     private val connector: ServerConnector,
+    private val repo: RomRepository,
 ) : ViewModel() {
 
     private val _savedServerUrl = MutableStateFlow(credentials.serverUrl.orEmpty())
@@ -527,9 +530,34 @@ class SettingsViewModel @Inject constructor(
         _canSaveUnverified.value = false
     }
 
-    /** Clears all stored credentials and server config. */
+    /**
+     * Clears the stored credentials and the cached library.
+     *
+     * The cache goes because disconnecting is how the app is pointed at another
+     * server, and RomM's platform and ROM ids are per-server — keeping the old
+     * rows would show one server's platforms, and its cached metadata, under
+     * the other server's ids.
+     */
     fun disconnect() {
         credentials.clearAll()
+        viewModelScope.launch {
+            // Confirming disconnect navigates straight to setup with
+            // `popUpTo(0)`, which clears this ViewModel and its scope while the
+            // wipe is still in flight.  NonCancellable lets it finish rather
+            // than leaving half a library behind under new credentials.
+            withContext(NonCancellable) { repo.clearLibraryCache() }
+        }
+    }
+
+    /**
+     * Drops the cached platforms and ROMs, keeping the connection.
+     *
+     * The escape hatch for a cache that has gone stale in a way a re-sync will
+     * not fix on its own.  Downloaded files, folder mappings and the download
+     * queue are untouched.
+     */
+    fun clearLibraryCache() {
+        viewModelScope.launch { repo.clearLibraryCache() }
     }
 
     private fun saved(): ConnectionState {
@@ -557,6 +585,7 @@ fun SettingsScreen(
     var password  by rememberSaveable { mutableStateOf("") }
 
     var showDisconnectDialog by remember { mutableStateOf(false) }
+    var showClearCacheDialog by remember { mutableStateOf(false) }
 
     // Every field ends in Done, which puts the keyboard away and returns to this
     // screen.  Walking the fields with Next belongs to first-run setup: here the
@@ -716,6 +745,16 @@ fun SettingsScreen(
             )
             HorizontalDivider()
 
+            ListItem(
+                modifier          = Modifier.clickable { showClearCacheDialog = true },
+                headlineContent   = { Text("Clear cached library") },
+                supportingContent = {
+                    Text("Re-fetch platforms and ROMs from the server")
+                },
+                leadingContent    = { Icon(Icons.Default.Refresh, null) },
+            )
+            HorizontalDivider()
+
             Spacer(Modifier.height(16.dp))
 
             ListItem(
@@ -745,7 +784,8 @@ fun SettingsScreen(
             title   = { Text("Disconnect from RomM?") },
             text    = {
                 Text(
-                    "This will remove your saved credentials and server URL. " +
+                    "This will remove your saved credentials and server URL, and " +
+                    "clear the cached library so the next server starts fresh. " +
                     "Downloaded files and folder mappings are not affected."
                 )
             },
@@ -763,6 +803,31 @@ fun SettingsScreen(
             },
             dismissButton = {
                 TextButton(onClick = { showDisconnectDialog = false }) { Text("Cancel") }
+            },
+        )
+    }
+
+    if (showClearCacheDialog) {
+        AlertDialog(
+            onDismissRequest = { showClearCacheDialog = false },
+            title   = { Text("Clear cached library?") },
+            text    = {
+                Text(
+                    "Platforms and ROMs will be fetched from the server again the " +
+                    "next time you open the list. Downloaded files, folder mappings " +
+                    "and your download history are not affected."
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        viewModel.clearLibraryCache()
+                        showClearCacheDialog = false
+                    },
+                ) { Text("Clear") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showClearCacheDialog = false }) { Text("Cancel") }
             },
         )
     }

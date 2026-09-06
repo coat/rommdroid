@@ -86,6 +86,12 @@ fun PlatformListScreen(
             TopAppBar(
                 title  = { Text("Platforms") },
                 actions = {
+                    // The list syncs once, when this screen is first created, so
+                    // without this a platform deleted on the server — or a cache
+                    // cleared from Settings — only resolves on the next launch.
+                    IconButton(onClick = { viewModel.refresh() }, enabled = !syncing) {
+                        Icon(Icons.Default.Refresh, contentDescription = "Refresh")
+                    }
                     IconButton(onClick = onSearchClick) {
                         Icon(Icons.Default.Search, contentDescription = "Search")
                     }
