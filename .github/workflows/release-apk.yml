@@ -5,14 +5,13 @@ on:
     branches: [main]
     tags: ['v*']
   # Creating a Release in the web UI is the other way a version ships. The
-  # publish steps below are idempotent, so if this and the tag push both fire
+  # publish step below is idempotent, so if this and the tag push both fire
   # for one tag, whichever survives the concurrency group still does the job.
   release:
     types: [published]
   workflow_dispatch:
 
-# Needed by the publish steps: creating releases, uploading assets, and moving
-# the rolling main-latest tag.
+# Needed by the publish step: creating releases and uploading assets.
 permissions:
   contents: write
 
@@ -106,11 +105,32 @@ jobs:
           meta=app/build/outputs/apk/release/output-metadata.json
           version=$(jq -r '.elements[0].versionName' "$meta")
           src=app/build/outputs/apk/release/$(jq -r '.elements[0].outputFile' "$meta")
-          name="rommdroid-${version}-${GITHUB_SHA::7}.apk"
+          # A tag names exactly one build, so the version alone identifies the
+          # APK on the release page. Untagged main builds all share whatever
+          # version is on main until the next bump, so those keep the short SHA
+          # to stay tellable apart.
+          case "$GITHUB_REF" in
+            refs/tags/v*) name="rommdroid-${version}.apk" ;;
+            *)            name="rommdroid-${version}-${GITHUB_SHA::7}.apk" ;;
+          esac
           mv "$src" "app/build/outputs/apk/release/$name"
           echo "version=$version"                                 >> "$GITHUB_OUTPUT"
           echo "name=$name"                                       >> "$GITHUB_OUTPUT"
           echo "path=app/build/outputs/apk/release/$name"          >> "$GITHUB_OUTPUT"
+
+      # The APK's version comes from build.gradle.kts, never from the tag, so
+      # a tag pushed onto a commit that missed the bump publishes an APK named
+      # for the wrong version — v0.2.0 shipped 0.1.0 that way. Fail here rather
+      # than release it; the steps that publish anything are all below.
+      - name: Check the tag matches versionName
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          VERSION: ${{ steps.apk.outputs.version }}
+        run: |
+          if [ "v$VERSION" != "$GITHUB_REF_NAME" ]; then
+            echo "::error::Tag $GITHUB_REF_NAME does not match versionName $VERSION in app/build.gradle.kts. Bump the version, merge, then re-tag — see .github/workflows/README-signing.md"
+            exit 1
+          fi
 
       - name: Verify the APK is signed
         run: |
@@ -141,29 +161,3 @@ jobs:
               --generate-notes
           fi
           gh release upload "$GITHUB_REF_NAME" "$APK" --clobber
-
-      # Merges to main refresh a single rolling prerelease, so the newest main
-      # build always has a stable, unzipped download URL. Marked --latest=false
-      # so it never displaces a real version as the repo's "Latest release".
-      - name: Publish rolling main build
-        if: github.ref == 'refs/heads/main'
-        env:
-          GH_TOKEN: ${{ github.token }}
-          APK: ${{ steps.apk.outputs.path }}
-          TAG: main-latest
-        run: |
-          # Point the rolling tag at this commit. It doesn't match the 'v*'
-          # trigger filter, so this push can't re-enter the workflow.
-          git tag -f "$TAG"
-          git push -f origin "refs/tags/$TAG"
-
-          notes="Automatic build of main at ${GITHUB_SHA::7} — not a tagged version."
-
-          if gh release view "$TAG" >/dev/null 2>&1; then
-            gh release edit "$TAG" --prerelease --latest=false \
-              --title 'Latest main build' --notes "$notes"
-          else
-            gh release create "$TAG" --prerelease --latest=false \
-              --title 'Latest main build' --notes "$notes"
-          fi
-          gh release upload "$TAG" "$APK" --clobber

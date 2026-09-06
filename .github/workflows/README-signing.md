@@ -39,36 +39,30 @@ gh secret set RELEASE_KEY_PASSWORD
 
 ## What the workflow does
 
-- **Push to `main`** — builds a signed release APK, attaches it to the workflow
-  run as an artifact (90 days), and refreshes the `main-latest` prerelease so
-  the newest main build always has a stable download URL.
+- **Push to `main`** — builds a signed release APK and attaches it to the
+  workflow run as an artifact (90 days).
 - **Push a `v*` tag, or publish a Release in the web UI** — same build, plus a
   GitHub Release with the APK attached and auto-generated notes.
 - **Manual run** — the `Run workflow` button, same as a push to `main`.
 
-Both publish paths are idempotent: they create the release only if it isn't
-there yet and upload the APK with `--clobber`. That's what makes publishing
-from the web UI work — the release already exists by the time the build
-finishes, and a plain `gh release create` would fail on it.
+Publishing is idempotent: it creates the release only if it isn't there yet
+and uploads the APK with `--clobber`. That's what makes publishing from the
+web UI work — the release already exists by the time the build finishes, and a
+plain `gh release create` would fail on it.
 
 ## Installing on a device
 
-Download APKs from a **release page**, not from a run's Artifacts section.
-GitHub always zips artifacts — there's no opt-out — so an artifact download
-lands as a `.zip` a phone can't install without unpacking it first. Release
+For a tagged version, download the APK from its **release page**: release
 assets download byte-for-byte, so tapping the `.apk` on the release page
-installs it directly.
+installs it directly. Untagged builds only exist as workflow artifacts, and
+GitHub always zips those — there's no opt-out — so they land as a `.zip` a
+phone can't install without unpacking it first.
 
 | Build | Where to get it |
 | --- | --- |
-| Newest `main` | Releases → **Latest main build** (`main-latest`), refreshed each merge |
 | A version | Releases → the `v*` tag |
+| Newest `main` | Run Artifacts, zipped — unpack on a computer, or `adb install` |
 | A PR branch | Run Artifacts, zipped — unpack on a computer, or `adb install` |
-
-`main-latest` is marked as a prerelease with `--latest=false`, so it never
-displaces a real tagged version as the repo's "Latest release". Its tag is
-force-moved to each new `main` commit; it doesn't match the `v*` trigger
-filter, so moving it can't re-enter the workflow.
 
 Every path runs `testDebugUnitTest` first and stops if it fails, so a tag can't
 cut a Release from code whose tests are broken. The step sits ahead of the
@@ -119,6 +113,44 @@ a release, and Play won't accept it. Do not reuse it for anything else.
 with your old local key, so the first new build won't install over it. Run
 `adb uninstall app.rommdroid.debug` once. Release installs are unaffected.
 
+## Cutting a version
+
+`versionName` is hand-edited, and the build reads the version out of the source,
+never out of the tag — that's how `v0.2.0` shipped an APK built from
+`versionName = "0.1.0"`. So bump it first and tag the commit carrying the bump:
+
+1. Edit `versionName` in `app/build.gradle.kts`. Also bump `version` in
+   `flake.nix` — it only names the Nix derivation's output, but keep the two in
+   step so there's one answer to "what version is this".
+2. Commit and merge to `main`.
+3. Tag that commit and push the tag:
+
+   ```sh
+   git tag v0.2.1
+   git push origin v0.2.1
+   ```
+
+The tag push runs `Release APK`, which builds, signs, creates the release, and
+attaches `rommdroid-0.2.1.apk`. Creating the Release from the web UI instead
+does the same thing — but only if the tag already points at a commit with the
+matching `versionName`, so step 1 still has to come first.
+
+A tag build that skipped step 1 now fails instead of publishing: the workflow
+checks the built `versionName` against the tag and stops before anything is
+released. The tag has to be exactly `v<versionName>`, so a `v0.2.1-rc1` on
+`0.2.1` is rejected too — give the source a matching `versionName` if you want
+to ship one. To recover from a rejected tag, bump the version, merge, then
+delete and re-push the tag:
+
+```sh
+git push origin :refs/tags/v0.2.1 && git tag -d v0.2.1
+git tag v0.2.1 && git push origin v0.2.1
+```
+
+Tagged builds are named `rommdroid-<version>.apk`; untagged `main` builds keep a
+short SHA (`rommdroid-<version>-abc1234.apk`) because they all share one version
+until the next bump.
+
 ## Version codes
 
 `versionCode` comes from `github.run_number` in CI, so every build gets its own
@@ -129,7 +161,7 @@ value with `-PbuildNumber=N`:
 ./gradlew assembleRelease -PbuildNumber=7
 ```
 
-`versionName` is still hand-edited in `app/build.gradle.kts`.
+`versionName` is hand-edited — see [Cutting a version](#cutting-a-version).
 
 ## Losing the keystore
 
