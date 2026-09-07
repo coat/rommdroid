@@ -1,0 +1,59 @@
+name: CodeQL
+
+# Replaces GitHub's default ("automatic") code scanning setup, which could only
+# ever analyze the Python icon script and the workflow files — 2% of the repo.
+# Adding java-kotlin there fails: default setup runs autobuild pinned to
+# `-Dorg.gradle.java.home=.../temurin-17-jdk`, and this project compiles at
+# Java 21, so every build dies with "invalid source release: 21". There is no
+# knob to change that JDK under default setup, hence this workflow.
+#
+# The fix is build-mode: none — CodeQL extracts Kotlin straight from source
+# instead of observing a compile, so no JDK, Android SDK, or Gradle run is
+# involved and the version conflict disappears along with the build.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    # Mondays at 07:00 UTC. Picks up newly published queries for code that has
+    # not changed, which the push/PR triggers alone would never re-flag.
+    - cron: '0 7 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  security-events: write   # required to upload the SARIF results
+
+# One analysis per ref; a new push supersedes the in-flight one.
+concurrency:
+  group: codeql-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  analyze:
+    name: Analyze (${{ matrix.language }})
+    runs-on: ubuntu-latest
+
+    strategy:
+      # One language's failure should not hide another's findings.
+      fail-fast: false
+      matrix:
+        # Every language uses build-mode: none. Kotlin is the one that needs
+        # saying out loud; actions and python have no build step to begin with.
+        language: [actions, java-kotlin, python]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: ${{ matrix.language }}
+          build-mode: none
+
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@v3
+        with:
+          category: '/language:${{ matrix.language }}'
