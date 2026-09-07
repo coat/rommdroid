@@ -2,14 +2,10 @@ name: CodeQL
 
 # Replaces GitHub's default ("automatic") code scanning setup, which could only
 # ever analyze the Python icon script and the workflow files — 2% of the repo.
-# Adding java-kotlin there fails: default setup runs autobuild pinned to
-# `-Dorg.gradle.java.home=.../temurin-17-jdk`, and this project compiles at
-# Java 21, so every build dies with "invalid source release: 21". There is no
-# knob to change that JDK under default setup, hence this workflow.
-#
-# The fix is build-mode: none — CodeQL extracts Kotlin straight from source
-# instead of observing a compile, so no JDK, Android SDK, or Gradle run is
-# involved and the version conflict disappears along with the build.
+# Adding java-kotlin there fails: default setup runs autobuild with
+# `-Dorg.gradle.java.home` pinned to temurin-17, and this app compiles at Java
+# 21, so assemble dies on "invalid source release: 21" before a database
+# exists. Default setup exposes no way to choose that JDK, hence this workflow.
 
 on:
   push:
@@ -40,18 +36,57 @@ jobs:
       # One language's failure should not hide another's findings.
       fail-fast: false
       matrix:
-        # Every language uses build-mode: none. Kotlin is the one that needs
-        # saying out loud; actions and python have no build step to begin with.
-        language: [actions, java-kotlin, python]
+        include:
+          # Neither of these compiles, so CodeQL reads them straight off disk.
+          - language: actions
+            build-mode: none
+          - language: python
+            build-mode: none
+          # Kotlin has no buildless extractor — `build-mode: none` for
+          # java-kotlin covers Java source only, and this repo has none, so it
+          # finalizes an empty database and fails with "could not process any
+          # code written in Java/Kotlin". Kotlin has to be observed being
+          # compiled, so the steps below build the app for real.
+          - language: java-kotlin
+            build-mode: manual
 
     steps:
       - uses: actions/checkout@v4
+
+      # The three steps below mirror pr-debug-apk.yml. They are what autobuild
+      # gets wrong: JDK 21 rather than the 17 it forces, and an Android SDK,
+      # which it never installs at all.
+      - name: Set up JDK 21
+        if: matrix.language == 'java-kotlin'
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Set up Android SDK
+        if: matrix.language == 'java-kotlin'
+        uses: android-actions/setup-android@v3
+        with:
+          packages: 'platform-tools platforms;android-35 build-tools;35.0.0'
+
+      - name: Set up Gradle
+        if: matrix.language == 'java-kotlin'
+        uses: gradle/actions/setup-gradle@v4
 
       - name: Initialize CodeQL
         uses: github/codeql-action/init@v3
         with:
           languages: ${{ matrix.language }}
-          build-mode: none
+          build-mode: ${{ matrix.build-mode }}
+
+      # Must sit between init and analyze: the extractor only sees a compile
+      # that happens while the database is open. Debug signs with the committed
+      # app/debug.keystore, so no secrets are needed and forks work too.
+      - name: Build the app for the extractor
+        if: matrix.language == 'java-kotlin'
+        env:
+          BUILD_NUMBER: ${{ github.run_number }}
+        run: ./gradlew --no-daemon assembleDebug
 
       - name: Perform CodeQL Analysis
         uses: github/codeql-action/analyze@v3
