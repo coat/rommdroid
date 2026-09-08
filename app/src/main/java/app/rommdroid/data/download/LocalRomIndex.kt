@@ -18,16 +18,13 @@ import javax.inject.Inject
 import javax.inject.Singleton
 
 /**
- * What one download folder already holds.
- *
- * [readable] is false only when the folder could not be listed at all — a
- * revoked SAF grant, or a directory the user has since deleted.  That is kept
- * separate from "listed, and empty" because the UI must not tell someone their
- * whole library is missing just because it lost permission to look at it.
+ * What one download folder already holds. [readable] is false only when the
+ * folder could not be listed at all, kept distinct from "listed, and empty" so
+ * a revoked grant does not read as a missing library.
  */
 class FolderContents private constructor(
     val readable: Boolean,
-    /** Lower-cased file name → size in bytes. */
+    /** Lower-cased file name -> size in bytes. */
     private val sizesByName: Map<String, Long>,
 ) {
     /** Size of [fileName] as it sits on disk, or null when it is not there. */
@@ -36,7 +33,7 @@ class FolderContents private constructor(
     fun contains(fileName: String): Boolean = sizeOf(fileName) != null
 
     companion object {
-        /** The folder could not be read; nothing can be said about its contents. */
+        /** The folder could not be read, so nothing can be said about it. */
         val Unreadable = FolderContents(readable = false, sizesByName = emptyMap())
 
         fun of(sizes: Map<String, Long>) =
@@ -45,17 +42,13 @@ class FolderContents private constructor(
 }
 
 /**
- * The ROMs the user already has on disk.
+ * The ROMs the user already has on disk. The queue only knows transfers this
+ * install performed, so a library copied from a PC or kept across a reinstall
+ * reads as never downloaded; the folder is the authority.
  *
- * The download queue only knows about transfers *this* install performed, so a
- * library restored from a backup, copied from a PC, or downloaded before a
- * reinstall reads as "never downloaded".  The folder itself is the authority on
- * what the user actually owns, so it is read directly.
- *
- * Listings are cached per folder because a browse screen asks for the same one
- * on every recomposition.  The cache key is the target itself, so re-pointing a
- * platform at a different directory reads the new one without an explicit
- * invalidation; only a change to a folder's *contents* needs [invalidate].
+ * Listings are cached per folder, keyed by the target, so re-pointing a platform
+ * reads the new directory without an explicit [invalidate] - only a change to a
+ * folder's contents needs one.
  */
 @Singleton
 class LocalRomIndex @Inject constructor(
@@ -66,18 +59,15 @@ class LocalRomIndex @Inject constructor(
 
     private val _revision = MutableStateFlow(0)
 
-    /**
-     * Bumped whenever the folders may have changed.  Collectors combine on this
-     * to re-read a listing rather than polling the filesystem.
-     */
+    /** Bumped when the folders may have changed, so collectors re-read a listing
+     *  rather than polling the filesystem. */
     val revision: StateFlow<Int> = _revision.asStateFlow()
 
     /** Contents of [target]'s folder, read once and then cached. */
     suspend fun listing(target: DownloadTarget): FolderContents {
         val key = cacheKey(target)
         cache[key]?.let { return it }
-        // Two screens racing here would read the same folder twice, which costs
-        // one extra cursor query and settles on the same answer either way.
+        // A race here costs one extra cursor query and settles the same way.
         val contents = withContext(Dispatchers.IO) { read(target) }
         cache[key] = contents
         return contents
@@ -97,8 +87,7 @@ class LocalRomIndex @Inject constructor(
             var documentId = DocumentsContract.getTreeDocumentId(tree)
             for (segment in target.subfolder.orEmpty().split('/')) {
                 if (segment.isBlank()) continue
-                // No subfolder yet just means nothing has been downloaded for
-                // this platform — the folder is created by the first download.
+                // No subfolder yet: the first download creates it.
                 documentId = childDirectoryId(tree, documentId, segment)
                     ?: return FolderContents.of(emptyMap())
             }
@@ -109,13 +98,9 @@ class LocalRomIndex @Inject constructor(
         }
     }
 
-    /**
-     * File name → size for every non-directory child of [parentId].
-     *
-     * Queried through [DocumentsContract] rather than `DocumentFile.listFiles()`
-     * because a ROMs folder holds thousands of entries and the DocumentFile
-     * wrapper allocates an object per row for columns we do not want.
-     */
+    /** File name -> size for every non-directory child of [parentId]. Through
+     *  [DocumentsContract] rather than `DocumentFile.listFiles()`, which
+     *  allocates an object per row over a folder of thousands. */
     private fun fileSizes(tree: Uri, parentId: String): Map<String, Long> {
         val children = DocumentsContract.buildChildDocumentsUriUsingTree(tree, parentId)
         val sizes = HashMap<String, Long>()
@@ -151,8 +136,8 @@ class LocalRomIndex @Inject constructor(
         )?.use { cursor ->
             while (cursor.moveToNext()) {
                 if (cursor.getString(2) != DocumentsContract.Document.MIME_TYPE_DIR) continue
-                // SD cards are usually exFAT, where "SNES" and "snes" are the
-                // same directory; matching case-sensitively would miss it.
+                // SD cards are usually exFAT, where "SNES" and "snes" are one
+                // directory.
                 if (cursor.getString(1).equals(name, ignoreCase = true)) return cursor.getString(0)
             }
         }

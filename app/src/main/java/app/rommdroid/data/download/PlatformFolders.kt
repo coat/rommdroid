@@ -1,21 +1,16 @@
 package app.rommdroid.data.download
 
 /**
- * Maps a RomM platform onto the folder name used by the ES-DE / RetroDECK
- * directory convention — the layout most Android frontends (ES-DE, RetroArch
- * playlists, Daijisho) expect under a single "ROMs" directory:
+ * RomM platform -> the ES-DE / RetroDECK folder name most Android frontends
+ * expect under a single "ROMs" directory (ROMs/snes, ROMs/psx, ...).
  *
- *     ROMs/snes/…   ROMs/psx/…   ROMs/megadrive/…
- *
- * Source of names: https://github.com/retrogamecorps/ES-DE-Directories
- *
- * RomM normalises every platform to a `UniversalPlatformSlug`, and 65 of those
- * already match an ES-DE folder verbatim (nes, snes, psx, ps2, genesis, n64,
- * gba, wii, switch, …), so only the divergent names need an alias below.
+ * Names from https://github.com/retrogamecorps/ES-DE-Directories. 65 of RomM's
+ * `UniversalPlatformSlug` values already match an ES-DE folder verbatim, so only
+ * the divergent ones need an alias.
  */
 object EsDePlatformFolders {
 
-    /** RomM slug → ES-DE folder, for the cases where the two disagree. */
+    /** RomM slug -> ES-DE folder, for the cases where the two disagree. */
     private val ALIASES: Map<String, String> = mapOf(
         "3ds" to "n3ds",
         "64dd" to "n64dd",
@@ -127,12 +122,9 @@ object EsDePlatformFolders {
     )
 
     /**
-     * The subfolder name to use for a platform, resolved in order of confidence:
-     * an explicit alias, the RomM slug itself when it is already an ES-DE name,
-     * then the same two checks against the server-side folder name.
-     *
-     * Falls back to the server's own folder name so an unrecognised platform
-     * still lands somewhere sensible rather than being dropped.
+     * The subfolder for a platform, in order of confidence: an alias, the RomM
+     * slug when it is already an ES-DE name, then both checks again against the
+     * server-side folder name, which is also the fallback.
      */
     fun forPlatform(slug: String, fsSlug: String): String {
         val s = slug.lowercase()
@@ -146,6 +138,6 @@ object EsDePlatformFolders {
         return fsSlug.ifBlank { slug }
     }
 
-    /** True when [name] is part of the ES-DE convention — used to flag typos in the UI. */
+    /** True for a name in the ES-DE convention; the UI flags the rest as typos. */
     fun isConventional(name: String): Boolean = name.lowercase() in KNOWN
 }

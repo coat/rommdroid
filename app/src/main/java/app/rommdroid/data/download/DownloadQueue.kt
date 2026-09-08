@@ -22,12 +22,8 @@ import kotlinx.coroutines.flow.map
 import javax.inject.Inject
 import javax.inject.Singleton
 
-/**
- * What happened when the user asked for a ROM.
- *
- * Every case is something the UI has to say out loud: a long-press that queues
- * nothing and explains nothing is indistinguishable from a missed gesture.
- */
+/** What happened when the user asked for a ROM. Every case has to be said out
+ *  loud: a silent no-op is indistinguishable from a missed gesture. */
 sealed interface EnqueueResult {
     /** [ids] are queue rows, so the caller can offer an undo. */
     data class Queued(val label: String, val ids: List<String>) : EnqueueResult
@@ -46,16 +42,13 @@ data class QueueMessage(
     val needsFolder: Boolean = false,
 )
 
-/**
- * Phrase a result for the user.  [suffix] lets a caller add the region flags of
- * the copy it picked, which is the only thing distinguishing one variant of a
- * game from another when the queue happened without a visit to the detail page.
- */
+/** Phrase a result for the user. [suffix] carries the region flags of the copy
+ *  picked, the only thing telling two variants apart from a list row. */
 fun EnqueueResult.asMessage(suffix: String = ""): QueueMessage {
     fun label(name: String) = if (suffix.isBlank()) name else "$name  $suffix"
     return when (this) {
         is EnqueueResult.Queued -> QueueMessage(
-            text = if (ids.size > 1) "Queued ${label(this.label)} · ${ids.size} files"
+            text = if (ids.size > 1) "Queued ${label(this.label)} - ${ids.size} files"
                    else "Queued ${label(this.label)}",
             undoIds = ids,
         )
@@ -83,20 +76,15 @@ data class DownloadItem(
     val error: String?,
     val enqueuedAt: Long,
 ) {
-    /** Null when the transfer has not reported a size yet, i.e. show it indeterminate. */
+    /** Null until the transfer reports a size: show it indeterminate. */
     val progress: Float?
         get() = if (totalBytes > 0 && downloadedBytes > 0) {
             (downloadedBytes.toFloat() / totalBytes.toFloat()).coerceIn(0f, 1f)
         } else null
 }
 
-/**
- * The one place a download gets started, cancelled or retried.
- *
- * Both the ROM list (long-press) and the detail screen enqueue through here so
- * that a download begun either way lands in the same queue, with the same
- * dedup rules and the same row on the downloads screen.
- */
+/** The one place a download gets started, cancelled or retried, so the list's
+ *  long-press and the detail screen share dedup rules and queue rows. */
 @Singleton
 class DownloadQueue @Inject constructor(
     private val repo: RomRepository,
@@ -108,19 +96,15 @@ class DownloadQueue @Inject constructor(
 ) {
 
     /**
-     * The queue, newest request first.
-     *
-     * Room holds the request and its last known outcome; WorkManager holds the
-     * live progress of anything still in flight.  Neither alone is enough —
-     * WorkManager prunes finished work, and Room cannot see byte counts — so
-     * the two are merged here rather than in each screen.
+     * The queue, newest first. Room holds the request and last known outcome,
+     * WorkManager the live progress. Neither alone is enough - WorkManager
+     * prunes finished work, Room cannot see byte counts - so they merge here.
      */
     val items: Flow<List<DownloadItem>> = combine(
         downloads.observeAll(),
         workManager.getWorkInfosByTagFlow(TAG_DOWNLOAD),
     ) { rows, infos ->
-        // A retried row has both its old finished WorkInfo and the new one under
-        // the same tag; the unfinished one is the interesting one.
+        // A retried row has both WorkInfos under one tag; take the unfinished.
         val live = infos
             .mapNotNull { info -> info.queueId()?.let { it to info } }
             .groupBy({ it.first }, { it.second })
@@ -135,15 +119,11 @@ class DownloadQueue @Inject constructor(
             .mapValues { (_, forRom) -> forRom.minBy { STATUS_ORDER.indexOf(it.status) }.status }
     }
 
-    // ── Enqueueing ────────────────────────────────────────────────────────────
+    // Enqueueing
 
-    /**
-     * Queue every file of [romId], fetching its detail first.
-     *
-     * The list screen only holds a cached [app.rommdroid.data.db.RomEntity],
-     * which has no file list — a multi-disc ROM would silently download only
-     * one of its parts if we guessed from the filename.
-     */
+    /** Queue every file of [romId], fetching its detail first: the cached
+     *  RomEntity has no file list, and a multi-disc ROM guessed from its
+     *  filename would silently download one part. */
     suspend fun enqueueRom(romId: Int): EnqueueResult {
         val rom = try {
             repo.getRomDetail(romId)
@@ -159,9 +139,9 @@ class DownloadQueue @Inject constructor(
     /** Queue [files] of an already-loaded [rom]. */
     suspend fun enqueue(rom: DetailedRomSchema, files: List<RomFileSchema>): EnqueueResult {
         val serverUrl = credentials.serverUrl
-            ?: return EnqueueResult.Failed("Not connected — set up your server in Settings")
+            ?: return EnqueueResult.Failed("Not connected - set up your server in Settings")
         val platform = platformDao.getById(rom.platformId)
-            ?: return EnqueueResult.Failed("Unknown platform — refresh the platform list")
+            ?: return EnqueueResult.Failed("Unknown platform - refresh the platform list")
         val target = targets.resolve(platform) ?: return EnqueueResult.NoFolder
         val label = rom.name ?: rom.fsNameNoTags
 
@@ -172,13 +152,13 @@ class DownloadQueue @Inject constructor(
             if (existing != null && !existing.status.isFinished) continue
 
             val url = try {
-                // A synthetic single-file ROM (id 0) has no file id to filter on;
-                // the API serves the primary file by name in that case.
+                // A synthetic single-file ROM (id 0) has no file id to filter
+                // on; the API serves the primary file by name instead.
                 val fileIds = if (file.id == 0) emptyList() else listOf(file.id)
                 repo.romDownloadUrl(serverUrl, rom.id, file.fileName, fileIds)
             } catch (e: IllegalArgumentException) {
                 android.util.Log.e(TAG, "Bad server URL: $serverUrl", e)
-                return EnqueueResult.Failed("Invalid server URL — reconnect in Settings")
+                return EnqueueResult.Failed("Invalid server URL - reconnect in Settings")
             }
 
             val now = System.currentTimeMillis()
@@ -269,15 +249,14 @@ class DownloadQueue @Inject constructor(
             .addTag("$TAG_QUEUE_PREFIX$id")
             .build()
 
-        // KEEP rather than REPLACE: a download already in flight for this exact
-        // file should survive a second tap, and a finished one is not "pending"
-        // so a retry still gets through.
+        // KEEP so a second tap does not restart a transfer in flight. A finished
+        // one is not pending, so a retry still gets through.
         workManager.enqueueUniqueWork(workName(id), ExistingWorkPolicy.KEEP, request)
     }
 
-    // ── Cancelling / clearing ─────────────────────────────────────────────────
+    // Cancelling / clearing
 
-    /** Stop [ids] and forget them entirely — the undo of a long-press. */
+    /** Stop [ids] and forget them: the undo of a long-press. */
     suspend fun undo(ids: List<String>) {
         ids.forEach { workManager.cancelUniqueWork(workName(it)) }
         downloads.deleteAll(ids)
@@ -294,11 +273,11 @@ class DownloadQueue @Inject constructor(
     /** Drop every finished row; anything still running is left alone. */
     suspend fun clearFinished() = downloads.deleteFinished()
 
-    // ── Helpers ───────────────────────────────────────────────────────────────
+    // Helpers
 
     private fun DownloadEntity.toItem(work: WorkInfo?): DownloadItem {
-        // The worker writes its own status, but it cannot report its own
-        // cancellation or a failure to even start, so live state wins.
+        // The worker cannot report its own cancellation or a failure to start,
+        // so live state wins over what it wrote.
         val live = work?.state?.toStatus() ?: status
         val downloaded = work?.progress?.getLong(DownloadWorker.PROGRESS_BYTES, 0L) ?: 0L
         val reportedTotal = work?.progress?.getLong(DownloadWorker.PROGRESS_TOTAL, 0L) ?: 0L
@@ -352,13 +331,8 @@ class DownloadQueue @Inject constructor(
     }
 }
 
-/**
- * The files to fetch for this ROM.
- *
- * The API omits the list for simple single-file ROMs, so one is synthesised
- * from the filesystem name — otherwise the most common case of all would have
- * nothing to download.
- */
+/** The files to fetch. The API omits the list for single-file ROMs, so one is
+ *  synthesised from the filesystem name. */
 fun DetailedRomSchema.downloadableFiles(): List<RomFileSchema> =
     files.ifEmpty {
         listOf(

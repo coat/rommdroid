@@ -5,19 +5,15 @@ import retrofit2.Response
 import retrofit2.http.*
 
 /**
- * Retrofit interface for the RomM REST API.
- *
- * Base URL is injected by the OkHttpClient (see NetworkModule) so that the
- * user-configured server URL is applied at runtime.  All endpoints listed here
- * match the RomM OpenAPI spec; the ones the app currently uses are un-commented.
- *
- * Auth: Bearer token ("rmm_…") is attached by [AuthInterceptor].
+ * The RomM REST API. The base URL comes from [BaseUrlInterceptor] so the
+ * user-configured server applies at runtime, and [AuthInterceptor] attaches the
+ * bearer token.
  */
 interface RomMApi {
 
-    // ── Auth ──────────────────────────────────────────────────────────────────
+    // Auth
 
-    /** Basic-auth login; returns a session cookie (used only during setup). */
+    /** Basic-auth login, returning a session cookie. Used only during setup. */
     @FormUrlEncoded
     @POST("api/login")
     suspend fun login(
@@ -25,21 +21,21 @@ interface RomMApi {
         @Field("password") password: String,
     ): Response<Unit>
 
-    /** Verify that the server is reachable and return version/capability info. */
+    /** Reachability plus version and capability info. */
     @GET("api/heartbeat")
     suspend fun heartbeat(): HeartbeatResponse
 
-    /** Fetch the authenticated user's profile. */
+    /** The authenticated user's profile. */
     @GET("api/users/me")
     suspend fun getMe(): UserResponse
 
-    // ── Client API Tokens (device pairing) ───────────────────────────────────
+    // Client API Tokens (device pairing)
 
-    /** Create a new client token (returns id + name; token delivered separately). */
+    /** Returns id and name; the token itself is delivered separately. */
     @POST("api/client-tokens")
     suspend fun createClientToken(@Body req: CreateTokenRequest): ClientTokenResponse
 
-    /** Begin device pairing — returns an 8-digit code valid for 5 minutes. */
+    /** An 8-digit pairing code, valid for 5 minutes. */
     @POST("api/client-tokens/{id}/pair")
     suspend fun pairToken(@Path("id") id: Int): PairResponse
 
@@ -47,12 +43,9 @@ interface RomMApi {
     @POST("api/client-tokens/exchange")
     suspend fun exchangeToken(@Body req: ExchangeTokenRequest): ClientTokenResponse
 
-    // ── Platforms ─────────────────────────────────────────────────────────────
+    // Platforms
 
-    /**
-     * List all platforms.  Returns a flat array (not paginated).
-     * Supports [updatedAfter] (ISO-8601) for incremental sync.
-     */
+    /** A flat array, not paginated. [updatedAfter] is ISO-8601. */
     @GET("api/platforms")
     suspend fun getPlatforms(
         @Query("updated_after") updatedAfter: String? = null,
@@ -61,37 +54,27 @@ interface RomMApi {
     @GET("api/platforms/{id}")
     suspend fun getPlatform(@Path("id") id: Int): PlatformSchema
 
-    // ── Collections ──────────────────────────────────────────────────────────
+    // Collections
 
-    /**
-     * List the user's collections.  Flat array, like the platform listing.
-     *
-     * The ROMs in one are fetched through [getRoms] with `collection_id`, not
-     * from a collection endpoint of their own.
-     */
+    /** A flat array, like the platform listing. Their ROMs come from [getRoms]
+     *  with `collection_id`, not from an endpoint of their own. */
     @GET("api/collections")
     suspend fun getCollections(): List<CollectionSchema>
 
-    // ── ROMs ──────────────────────────────────────────────────────────────────
+    // ROMs
 
     /**
-     * Paginated ROM list with extensive filtering.
+     * Paginated ROM list.
      *
-     * Pass [withFiles] = true to inline file list (costs more bandwidth).
-     *
-     * [groupByMetaId] = 1 collapses regional variants down to one entry per
-     * matched game, which hides real ROMs the server would otherwise return
-     * (441 Game Boy ROMs become 340).  The server default is 0 and that is what
-     * the web UI shows, so we match it.
-     *
-     * Disable [withCharIndex], [withRomIdIndex], [withFilterValues] for lean
-     * programmatic access (they add significant response size for UI niceties
-     * that we don't need in the list view).
+     * [groupByMetaId] = 1 collapses regional variants and hides real ROMs (441
+     * Game Boy ROMs become 340); 0 is the server default and what the web UI
+     * shows. [withCharIndex], [withRomIdIndex] and [withFilterValues] add
+     * significant response size for UI niceties this app does not use.
      */
     @GET("api/roms")
     suspend fun getRoms(
-        // Platform filtering is "platform_ids"; RomM ignores an unknown
-        // "platform_id" silently and returns the whole library instead.
+        // "platform_ids": RomM silently ignores an unknown "platform_id" and
+        // returns the whole library.
         @Query("platform_ids")      platformIds: Int? = null,
         @Query("collection_id")     collectionId: Int? = null,
         @Query("search_term")       searchTerm: String? = null,
@@ -110,13 +93,10 @@ interface RomMApi {
     @GET("api/roms/{id}")
     suspend fun getRom(@Path("id") id: Int): DetailedRomSchema
 
-    // ── Downloads ────────────────────────────────────────────────────────────
-    //
-    // Download URLs are not called via Retrofit — they are passed directly to
-    // WorkManager's DownloadWorker so that OkHttp handles streaming with
-    // progress callbacks.  Build the URL with [RomMApiUrls.romDownloadUrl].
+    // Downloads go straight to DownloadWorker rather than through Retrofit, so
+    // OkHttp can stream with progress callbacks. See RomRepository.romDownloadUrl.
 
-    // ── Firmware ─────────────────────────────────────────────────────────────
+    // Firmware
 
     @GET("api/firmware")
     suspend fun getFirmware(

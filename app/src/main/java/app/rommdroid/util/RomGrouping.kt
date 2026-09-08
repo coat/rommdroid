@@ -2,23 +2,15 @@ package app.rommdroid.util
 
 import app.rommdroid.data.db.RomEntity
 
-/**
- * Collapsing regional variants into one entry per game.
- *
- * The server can do this itself with `group_by_meta_id=1`, but that drops the
- * variants from the response entirely — the user can then no longer reach the
- * Japanese copy at all.  So the list is still fetched ungrouped and folded here,
- * where every variant stays addressable behind the row it was folded into.
- */
+// Variants are folded client-side rather than with the server's
+// `group_by_meta_id=1`, which drops the non-primary variants from the response
+// and so puts the Japanese copy out of reach entirely.
 
 /**
  * Stable identity for "the same game on the same platform".
  *
- * Tiered on purpose: the metadata id is authoritative when RomM matched the ROM,
- * the slug covers matches that came from a provider other than IGDB, and the
- * tag-stripped filename is the last resort for ROMs the server never identified.
- * Platform is always part of the key so a cross-platform search does not merge
- * the SNES and Genesis copies of one game.
+ * Tiered: metadata id when RomM matched the ROM, slug for matches from a
+ * provider other than IGDB, tag-stripped filename for ROMs it never identified.
  */
 fun romGroupKey(
     platformId: Int,
@@ -34,12 +26,8 @@ fun romGroupKey(
     return "$platformId|$identity"
 }
 
-/**
- * One game, plus every ROM in the library that is a copy of it.
- *
- * [variants] always contains at least [primary] and is ordered so the preferred
- * region comes first — the same order the variant picker shows.
- */
+/** One game, plus every copy of it. [variants] holds at least [primary] and is
+ *  ordered preferred-region first, matching the variant picker. */
 data class RomGroup(
     val key: String,
     val primary: RomEntity,
@@ -48,25 +36,16 @@ data class RomGroup(
     val regions: List<String>,
 ) {
     val size: Int get() = variants.size
-    /** True when this row stands for more than one downloadable copy. */
     val hasVariants: Boolean get() = variants.size > 1
 
-    /**
-     * The game's score, from whichever variant carries one.
-     *
-     * A rating belongs to the game rather than to any one copy of it, but only
-     * the variants the server identified have it — so an unidentified preferred
-     * copy borrows the score from an identified sibling instead of showing none.
-     */
+    /** A rating belongs to the game, not a copy, so an unidentified primary
+     *  borrows the score from an identified sibling. */
     val rating: Double? get() = variants.firstNotNullOfOrNull { it.averageRating }
 }
 
 /**
- * Fold [roms] into one [RomGroup] per game.
- *
- * Groups appear in the order their first member appeared, so a list the DAO
- * already sorted by name stays sorted.  [preferredRegions] (canonical codes,
- * most-wanted first) decides which variant becomes [RomGroup.primary].
+ * Fold [roms] into one [RomGroup] per game, preserving input order so a
+ * DAO-sorted list stays sorted. [preferredRegions] decides the [RomGroup.primary].
  */
 fun groupRoms(
     roms: List<RomEntity>,
@@ -82,9 +61,7 @@ fun groupRoms(
         val ordered = members.sortedWith(
             compareBy(
                 { regionRank(regionsByRom.getValue(it), preferredRegions) },
-                // Tie-break on the filename so the choice is stable across syncs
-                // rather than following whatever order the server paged them in.
-                { it.fsName },
+                { it.fsName },  // stable across syncs; server paging order is not
             )
         )
         RomGroup(
@@ -96,9 +73,7 @@ fun groupRoms(
     }
 }
 
-/**
- * Position of a ROM's best-matching region in [preferred]; unmatched sorts last.
- */
+/** Position of a ROM's best-matching region in [preferred]; unmatched sorts last. */
 fun regionRank(regions: List<String>, preferred: List<String>): Int {
     var best = Int.MAX_VALUE
     for (region in regions) {
@@ -108,20 +83,15 @@ fun regionRank(regions: List<String>, preferred: List<String>): Int {
     return best
 }
 
-/**
- * Fallback preference when the device locale's country is not itself a region
- * present in the library.  Ordered by how much of a typical library it covers.
- */
+/** Fallback when the locale's country is not itself a region in the library. */
 val DEFAULT_REGION_PREFERENCE: List<String> = listOf("US", "WORLD", "EU", "JP")
 
 /** Countries whose ROMs are usually the US release rather than a PAL one. */
 private val NTSC_U = setOf("US", "CA", "MX")
 
 /**
- * Region preference for a device whose locale country is [country].
- *
- * The user's own country wins outright when the library actually has a copy for
- * it; beyond that the point is only to stop a UK user's list defaulting to the
+ * Region preference for a device whose locale country is [country]. The user's
+ * own country wins outright; the rest only stops a PAL user defaulting to the
  * US release of everything.
  */
 fun regionPreference(country: String?): List<String> {
@@ -135,11 +105,9 @@ fun regionPreference(country: String?): List<String> {
     return (listOfNotNull(home) + rest).distinct()
 }
 
-/**
- * One downloadable copy of a game, as shown in the detail screen's picker.
- * [fsName] is the filename because that is where the revision and dump tags
- * live — two USA copies are otherwise indistinguishable.
- */
+/** One downloadable copy, as the detail screen's picker shows it. [fsName] is
+ *  the filename because the revision and dump tags live there, and two USA
+ *  copies are otherwise indistinguishable. */
 data class RomVariant(
     val id: Int,
     val fsName: String,
@@ -148,10 +116,9 @@ data class RomVariant(
 )
 
 /**
- * Canonical regions for a ROM: what the server recorded, or what the filename
- * tags say when it recorded nothing.  The fallback matters most for ROMs the
- * server could not identify — those are the ones with no other distinguishing
- * metadata, so the filename tag is all the user has to go on.
+ * Canonical regions for a ROM: what the server recorded, else what the filename
+ * tags say. Unidentified ROMs have no other distinguishing metadata, so the
+ * filename tag is all there is.
  */
 fun regionsFor(recorded: List<String>, fsName: String): List<String> =
     recorded.ifEmpty { parseRegionsFromFileName(fsName) }

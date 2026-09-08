@@ -27,25 +27,15 @@ import javax.inject.Inject
 @AndroidEntryPoint
 class MainActivity : ComponentActivity() {
 
-    /**
-     * Which lettering the hint bars print.  Injected rather than read in the
-     * composition because it is provided above the nav host, for every screen
-     * at once.
-     */
+    /** Which lettering the hint bars print. Injected because it is provided
+     *  above the nav host, for every screen at once. */
     @Inject lateinit var buttonLayout: GamepadLayoutRepository
 
     private val requestNotificationPermission =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { /* best effort */ }
 
-    /**
-     * The controller map, read here rather than in the composition.
-     *
-     * A key event goes to whatever holds focus, and this app puts native
-     * EditTexts inside its composition — once one is focused it swallows the
-     * whole dispatch, and a `Modifier.onKeyEvent` in the tree above it never
-     * runs.  The Activity sees every key before any of that, so the buttons are
-     * read here and handed to the screen that registered for them.
-     */
+    /** The controller map. Read at the Activity, above focus, because a focused
+     *  native EditText swallows the whole key dispatch. */
     private val gamepad = GamepadDispatcher()
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -53,11 +43,9 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         requestNotificationPermissionIfNeeded()
 
-        // The last resort for B, under every screen's own bindings: whatever
-        // the system back gesture would have done.  That routes through the
-        // same OnBackPressedDispatcher a Compose BackHandler registers with, so
-        // a screen that closes its filter on back closes it on B too, without
-        // knowing the button exists.
+        // The last resort for B: whatever the system back gesture would do. It
+        // routes through the same OnBackPressedDispatcher a Compose BackHandler
+        // uses, so a screen handles B without knowing the button exists.
         gamepad.register { action ->
             if (action == GamepadAction.Back) {
                 onBackPressedDispatcher.onBackPressed()
@@ -81,13 +69,10 @@ class MainActivity : ComponentActivity() {
     }
 
     /**
-     * A presses whatever holds focus, everything else goes to the screen.
-     *
-     * Compose treats only DPAD_CENTER and Enter as a click, so A — which
-     * arrives as its own keycode and means nothing to anyone — is rewritten
-     * into the press the focused row is already listening for.  Doing it as a
-     * key event rather than as a "click the focused thing" call keeps buttons,
-     * list rows and dialogs all working the one way.
+     * A presses whatever holds focus; everything else goes to the screen.
+     * Compose treats only DPAD_CENTER and Enter as a click, so A is rewritten
+     * into one. As a key event rather than a "click the focused thing" call, so
+     * buttons, rows and dialogs all work the one way.
      */
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
         if (event.keyCode == KeyEvent.KEYCODE_BUTTON_A) {
@@ -97,13 +82,8 @@ class MainActivity : ComponentActivity() {
         return super.dispatchKeyEvent(event)
     }
 
-    /**
-     * Sticks and analog triggers.
-     *
-     * Read, never consumed: the framework turns left-stick movement into D-pad
-     * keys only for motion events that nothing handled, and that synthesis is
-     * what makes the stick move focus at all.
-     */
+    /** Sticks and analog triggers. Read, never consumed: the framework
+     *  synthesises the left stick's D-pad keys only for unhandled events. */
     override fun dispatchGenericMotionEvent(event: MotionEvent): Boolean {
         gamepad.onMotionEvent(event)
         return super.dispatchGenericMotionEvent(event)
@@ -111,16 +91,12 @@ class MainActivity : ComponentActivity() {
 
     override fun onPause() {
         super.onPause()
-        // The release of a stick held as the app leaves the foreground goes to
-        // whatever replaced it, so let go of everything here instead.
+        // A held stick's release goes to whatever replaced us in the foreground.
         gamepad.release()
     }
 
-    /**
-     * POST_NOTIFICATIONS is a runtime permission on Android 13+. It was declared
-     * in the manifest but never requested, so download progress notifications
-     * were silently dropped.
-     */
+    /** POST_NOTIFICATIONS is a runtime permission on Android 13+; without it
+     *  download progress notifications are silently dropped. */
     private fun requestNotificationPermissionIfNeeded() {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return
         val granted = ContextCompat.checkSelfPermission(

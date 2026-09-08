@@ -8,7 +8,7 @@ import org.junit.Test
 /**
  * RomM's ClientTokenCreatePayload requires `scopes` (min 1 item) and rejects the
  * body with 422 when it is absent.  Because `scopes` has a Kotlin default, it is
- * only put on the wire when the Json instance has encodeDefaults enabled — so
+ * only put on the wire when the Json instance has encodeDefaults enabled - so
  * pin both the setting and the scope names here.
  */
 class CreateTokenRequestTest {
@@ -34,7 +34,7 @@ class CreateTokenRequestTest {
 
     @Test
     fun `every requested scope exists in RomM's scope enum`() {
-        // handler/auth/constants.py — READ_SCOPES_MAP; note there is no "tasks.read".
+        // handler/auth/constants.py - READ_SCOPES_MAP; note there is no "tasks.read".
         val readScopes = setOf(
             "me.read", "roms.read", "platforms.read", "assets.read", "devices.read",
             "firmware.read", "roms.user.read", "collections.read", "playlists.read",

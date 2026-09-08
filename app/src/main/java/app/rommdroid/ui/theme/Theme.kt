@@ -14,7 +14,7 @@ private val LightColors = lightColorScheme()
 
 @Composable
 fun RomMDroidTheme(
-    useDarkTheme: Boolean = true,   // default dark — ROM library apps look better dark
+    useDarkTheme: Boolean = true,
     content: @Composable () -> Unit,
 ) {
     val colorScheme = when {

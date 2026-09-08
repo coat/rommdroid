@@ -18,9 +18,8 @@ import app.rommdroid.ui.screens.*
 fun RomMDroidNavHost() {
     val navController = rememberNavController()
 
-    // StartupViewModel reads EncryptedSharedPreferences synchronously.
-    // Holding the result here (above the NavHost) means a configuration
-    // change won't flip the start destination after it has been decided.
+    // Held above the NavHost so a configuration change cannot flip the start
+    // destination after it has been decided.
     val startupViewModel: StartupViewModel = hiltViewModel()
     val startDestination = if (startupViewModel.isConfigured) {
         Route.PlatformList.path
@@ -28,13 +27,9 @@ fun RomMDroidNavHost() {
         Route.Setup.path
     }
 
-    // Select and Start work from anywhere, the way the two little buttons do on
-    // a console: one opens the settings, the other the queue.  They sit under
-    // every screen's own bindings, so a screen is free to take them back.
-    //
-    // Not during setup — neither page has anything to say before there is a
-    // server to talk to, and the queue would be a way out of an unfinished
-    // sign-in that leads nowhere.
+    // Select and Start work from anywhere, under every screen's own bindings so
+    // a screen can take them back. Not during setup, where neither page has
+    // anything to say and the queue leads out of an unfinished sign-in.
     val route by navController.currentBackStackEntryAsState()
     fun openOnce(path: String): Boolean {
         val current = route?.destination?.route
@@ -55,7 +50,6 @@ fun RomMDroidNavHost() {
         startDestination = startDestination,
     ) {
 
-        // ── Setup / onboarding ────────────────────────────────────────────────
         composable(Route.Setup.path) {
             SetupScreen(
                 viewModel  = hiltViewModel(),
@@ -67,7 +61,6 @@ fun RomMDroidNavHost() {
             )
         }
 
-        // ── Platform list ─────────────────────────────────────────────────────
         composable(Route.PlatformList.path) {
             PlatformListScreen(
                 viewModel        = hiltViewModel(),
@@ -81,7 +74,6 @@ fun RomMDroidNavHost() {
             )
         }
 
-        // ── ROM list ──────────────────────────────────────────────────────────
         composable(
             route     = Route.RomList.TEMPLATE,
             arguments = listOf(navArgument(Route.RomList.ARG) { type = NavType.IntType }),
@@ -95,7 +87,6 @@ fun RomMDroidNavHost() {
             )
         }
 
-        // ── Collections ───────────────────────────────────────────────────────
         composable(Route.CollectionList.path) {
             CollectionListScreen(
                 viewModel         = hiltViewModel(),
@@ -104,8 +95,8 @@ fun RomMDroidNavHost() {
             )
         }
 
-        // A collection's ROMs are the same screen a platform's are — only the
-        // argument differs, and [RomListViewModel] reads whichever it was given.
+        // Same screen as a platform's ROMs; only the argument differs, and
+        // RomListViewModel reads whichever it was given.
         composable(
             route     = Route.CollectionRoms.TEMPLATE,
             arguments = listOf(navArgument(Route.CollectionRoms.ARG) { type = NavType.IntType }),
@@ -119,7 +110,6 @@ fun RomMDroidNavHost() {
             )
         }
 
-        // ── ROM detail ────────────────────────────────────────────────────────
         composable(
             route     = Route.RomDetail.TEMPLATE,
             arguments = listOf(navArgument(Route.RomDetail.ARG) { type = NavType.IntType }),
@@ -133,7 +123,6 @@ fun RomMDroidNavHost() {
             )
         }
 
-        // ── Search ────────────────────────────────────────────────────────────
         composable(Route.Search.path) {
             SearchScreen(
                 viewModel        = hiltViewModel(),
@@ -143,7 +132,6 @@ fun RomMDroidNavHost() {
             )
         }
 
-        // ── Downloads ─────────────────────────────────────────────────────────
         composable(Route.Downloads.path) {
             DownloadsScreen(
                 viewModel  = hiltViewModel(),
@@ -152,14 +140,12 @@ fun RomMDroidNavHost() {
             )
         }
 
-        // ── Settings ──────────────────────────────────────────────────────────
         composable(Route.Settings.path) {
             SettingsScreen(
                 viewModel        = hiltViewModel(),
                 onFolderMapping  = { navController.navigate(Route.FolderMapping.path) },
                 onResetSetup     = {
-                    // Wipes back stack and returns to setup so the user can
-                    // point the app at a different server or re-authenticate.
+                    // Wipe the back stack: the app is being re-pointed.
                     navController.navigate(Route.Setup.path) {
                         popUpTo(0) { inclusive = true }
                     }

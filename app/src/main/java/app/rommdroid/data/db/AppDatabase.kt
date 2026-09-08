@@ -15,7 +15,7 @@ import androidx.room.RoomDatabase
         DownloadEntity::class,
     ],
     version = 6,
-    exportSchema = false,   // set to true + configure schemaLocation before release
+    exportSchema = false,
 )
 abstract class AppDatabase : RoomDatabase() {
     abstract fun platformDao(): PlatformDao

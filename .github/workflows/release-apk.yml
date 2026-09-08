@@ -53,7 +53,7 @@ jobs:
             [ -n "${!v}" ] || missing="$missing $v"
           done
           if [ -n "$missing" ]; then
-            echo "::error::Missing repository secrets:$missing — see .github/workflows/README-signing.md"
+            echo "::error::Missing repository secrets:$missing - see .github/workflows/README-signing.md"
             exit 1
           fi
 
@@ -120,7 +120,7 @@ jobs:
 
       # The APK's version comes from build.gradle.kts, never from the tag, so
       # a tag pushed onto a commit that missed the bump publishes an APK named
-      # for the wrong version — v0.2.0 shipped 0.1.0 that way. Fail here rather
+      # for the wrong version - v0.2.0 shipped 0.1.0 that way. Fail here rather
       # than release it; the steps that publish anything are all below.
       - name: Check the tag matches versionName
         if: startsWith(github.ref, 'refs/tags/v')
@@ -128,7 +128,7 @@ jobs:
           VERSION: ${{ steps.apk.outputs.version }}
         run: |
           if [ "v$VERSION" != "$GITHUB_REF_NAME" ]; then
-            echo "::error::Tag $GITHUB_REF_NAME does not match versionName $VERSION in app/build.gradle.kts. Bump the version, merge, then re-tag — see .github/workflows/README-signing.md"
+            echo "::error::Tag $GITHUB_REF_NAME does not match versionName $VERSION in app/build.gradle.kts. Bump the version, merge, then re-tag - see .github/workflows/README-signing.md"
             exit 1
           fi
 

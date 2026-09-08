@@ -12,13 +12,8 @@ import kotlinx.serialization.json.Json
 import javax.inject.Inject
 import javax.inject.Singleton
 
-/**
- * The folder mappings, in a form that outlives the database file.
- *
- * Deliberately its own shape rather than the entities: this is a wire format
- * written to disk, and it has to keep decoding after the tables it mirrors are
- * refactored.
- */
+/** The folder mappings in a form that outlives the database file. Its own shape
+ *  rather than the entities', so it keeps decoding after they are refactored. */
 @Serializable
 data class FolderMappingSnapshot(
     val base: Folder? = null,
@@ -38,33 +33,24 @@ data class FolderMappingSnapshot(
         get() = base == null && overrides.isEmpty() && subfolders.isEmpty()
 
     companion object {
-        /**
-         * Lenient on purpose.  What is being decoded was written by whichever
-         * build of the app the user had before this one, and a field that build
-         * knew about but this one does not must not cost them the mappings the
-         * rest of the file still carries.
-         */
+        /** Lenient: this was written by whichever build the user had before,
+         *  and one unknown field must not cost them the whole file. */
         internal val format = Json { ignoreUnknownKeys = true }
     }
 }
 
 /**
- * Keeps a copy of the folder mappings outside SQLite, and puts them back when
- * the database is rebuilt from scratch.
+ * Mirrors the folder mappings outside SQLite and puts them back when the
+ * database is rebuilt from scratch.
  *
- * Room's destructive fallback drops every table when it meets a version it has
- * no migration for, and the mappings would go with the ROM cache — except the
- * cache is one sync away from being whole again and the mappings are not.  They
- * are re-picked by hand, folder by folder, through the document picker.  So
- * every write to them is mirrored here, into a preferences file the database
- * rebuild cannot touch, and read back in
- * [app.rommdroid.di.DatabaseModule]'s open callback.
+ * Room's destructive fallback drops every table. The ROM cache is one sync away
+ * from whole again; the mappings are re-picked by hand through the document
+ * picker, so they are mirrored into a preferences file the rebuild cannot touch
+ * and read back in [app.rommdroid.di.DatabaseModule]'s open callback.
  *
- * A mapping is only restored while the app still holds its SAF grant.  Anything
- * that takes the grant away — an uninstall, the user revoking it in system
- * settings, a restore of this file onto a different device — leaves a path the
- * app cannot write to, and showing it as configured would turn every download
- * into a failure with no hint of the cause.  Better to be honestly unset.
+ * Only restored while the app still holds the SAF grant. A mapping shown as
+ * configured but unwritable turns every download into a failure with no visible
+ * cause; better honestly unset.
  */
 @Singleton
 class FolderMappingBackup @Inject constructor(
@@ -94,14 +80,11 @@ class FolderMappingBackup @Inject constructor(
     }
 
     /**
-     * Takes the first mirror of mappings that were configured before there was
-     * anything to mirror into.
-     *
-     * Without this, the copy only starts existing once the user next changes a
-     * folder — so someone who set theirs up months ago and has not touched it
-     * since, which is everybody the mirror is for, would still lose it to the
-     * next rebuild.  Reads through [SupportSQLiteDatabase] because this runs on
-     * Room's open callback, before the DAOs are usable.
+     * Takes the first mirror of mappings configured before there was anything to
+     * mirror into. Otherwise the copy only appears once the user next changes a
+     * folder, which is nobody the mirror is for. Reads through
+     * [SupportSQLiteDatabase] because the DAOs are not usable on the open
+     * callback.
      */
     fun seedFrom(db: SupportSQLiteDatabase) {
         if (!load().isEmpty) return
@@ -148,14 +131,9 @@ class FolderMappingBackup @Inject constructor(
         }
     }
 
-    /**
-     * Writes the mirrored mappings into freshly created tables.
-     *
-     * Runs on Room's open callback, so it talks to [SupportSQLiteDatabase]
-     * directly — the DAOs are not usable yet at that point.  Never throws: a
-     * failure here costs the user their mappings, which is where they already
-     * were, and must not also cost them a launch.
-     */
+    /** Writes the mirrored mappings into freshly created tables. Never throws: a
+     *  failure here leaves the user where they already were, and must not also
+     *  cost them a launch. */
     fun restoreInto(db: SupportSQLiteDatabase) {
         val snapshot = load()
         if (snapshot.isEmpty) return
@@ -173,9 +151,8 @@ class FolderMappingBackup @Inject constructor(
                     arrayOf<Any>(override.platformId, override.uri, override.displayPath),
                 )
             }
-            // Subfolder names are just names — nothing to hold a grant on, and
-            // they are meaningless without the base folder they sit under, which
-            // the row above has already had its say about.
+            // Names, so no grant to hold, and meaningless without the base
+            // folder the block above already ruled on.
             for (sub in snapshot.subfolders) {
                 db.execSQL(
                     "INSERT OR REPLACE INTO `platform_subfolders` (`platformId`, `name`) VALUES (?, ?)",

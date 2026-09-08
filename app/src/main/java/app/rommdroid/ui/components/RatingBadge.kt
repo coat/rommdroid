@@ -11,15 +11,11 @@ import androidx.compose.ui.unit.dp
 import kotlin.math.roundToInt
 
 /**
- * A game's aggregate score, as RomM scales it: one number out of 100.
+ * A game's aggregate score out of 100, rounded: the decimals are an artefact of
+ * averaging however many providers scored it.
  *
- * Rounded, because the value behind it is a mean of however many providers
- * happened to score the game — its decimals are an artefact of that arithmetic
- * rather than anything a rating tells you.
- *
- * [compact] is the list-row size: smaller type and no vertical padding, so the
- * pill fits inside the line the row already draws.  Without that the badge is
- * taller than the text beside it and every row in the list grows to match.
+ * [compact] is the list-row size, with no vertical padding, so the pill fits the
+ * line the row already draws instead of growing every row to match.
  */
 @Composable
 fun RatingBadge(

@@ -1,11 +1,9 @@
 package app.rommdroid.ui.navigation
 
-/** All routes in the app. Sealed so the nav graph is exhaustive. */
+/** Sealed so the nav graph is exhaustive. */
 sealed class Route(val path: String) {
-    // Setup flow
     data object Setup : Route("setup")
 
-    // Main nav
     data object PlatformList  : Route("platforms")
     data class  RomList(val platformId: Int = 0) : Route("platforms/{platformId}/roms") {
         companion object {
@@ -14,10 +12,8 @@ sealed class Route(val path: String) {
             fun go(platformId: Int) = "platforms/$platformId/roms"
         }
     }
-    /**
-     * The collections, reached from the row pinned above the platforms rather
-     * than from a tab or a drawer — one flat list, then straight into the ROMs.
-     */
+    /** Reached from the row pinned above the platforms: one flat list, then
+     *  straight into the ROMs. */
     data object CollectionList : Route("collections")
     data class  CollectionRoms(val collectionId: Int = 0) : Route("collections/{collectionId}/roms") {
         companion object {

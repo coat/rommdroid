@@ -18,7 +18,7 @@
 
     <!-- This is built for Android gaming handhelds, where the buttons are the
          primary input: every screen can be driven from a controller alone.
-         Neither is required — the app runs on a plain phone with a touchscreen
+         Neither is required - the app runs on a plain phone with a touchscreen
          and no gamepad, and declaring the touchscreen optional is what keeps it
          installable on a device that has only the buttons. -->
     <uses-feature android:name="android.hardware.gamepad" android:required="false" />

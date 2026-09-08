@@ -1,11 +1,7 @@
 package app.rommdroid.util
 
-/**
- * Named references RomM's metadata providers (IGDB, ScreenScraper, MobyGames)
- * actually emit in titles and summaries.  Deliberately not the full HTML5 set —
- * that is some 2,200 names, and anything outside this list arrives as a numeric
- * reference, which [decodeHtmlEntities] resolves generically.
- */
+/** The named references the metadata providers actually emit; everything else
+ *  arrives as a numeric reference and is resolved generically. */
 private val NAMED_ENTITIES = mapOf(
     "quot" to "\"",     "amp" to "&",       "lt" to "<",        "gt" to ">",
     "apos" to "'",      "nbsp" to "\u00A0", "hellip" to "…",
@@ -19,24 +15,18 @@ private val NAMED_ENTITIES = mapOf(
     "auml" to "ä", "ouml" to "ö", "uuml" to "ü",
 )
 
-/** Longest reference we will consider: "&#x0001F600;" and friends. */
+/** Longest reference considered: "&#x0001F600;" and friends. */
 private const val MAX_REFERENCE_LENGTH = 12
 
 /**
  * Resolves HTML character references in scraped metadata text.
  *
- * RomM passes provider text through verbatim, so a summary arrives as
- * `As Mario, the player must control a &quot;podship&quot;`.  The text is
- * otherwise plain — no markup, and real paragraph breaks as newlines — which
- * rules out `Html.fromHtml`: it decodes the references but collapses those
- * blank lines along the way.
+ * Not `Html.fromHtml`: provider text is plain apart from the references, and
+ * fromHtml collapses the blank lines that separate its paragraphs. Anything
+ * unrecognised is left as it came, so a bare "&" survives.
  *
- * Anything unrecognised is left exactly as it came, so text that merely
- * contains a bare "&" survives untouched.
- *
- * Do NOT apply this to filenames.  `fs_name` and `file_name` are real names on
- * disk, where a literal "&amp;" has to survive verbatim to address the right
- * file.
+ * Do NOT apply this to filenames. `fs_name` and `file_name` are real names on
+ * disk where a literal "&amp;" has to survive verbatim.
  */
 fun String.decodeHtmlEntities(): String {
     if ('&' !in this) return this   // overwhelmingly the common case
@@ -51,8 +41,7 @@ fun String.decodeHtmlEntities(): String {
             continue
         }
 
-        // A missing ";" — or one too far off to belong to this "&" — means the
-        // ampersand is literal text.
+        // No ";" nearby means the ampersand is literal text.
         val end = indexOf(';', i + 1)
         if (end == -1 || end - i > MAX_REFERENCE_LENGTH) {
             out.append(c)

@@ -78,7 +78,7 @@ import kotlinx.coroutines.Dispatchers
 import java.util.Locale
 import javax.inject.Inject
 
-// ── ViewModel ─────────────────────────────────────────────────────────────────
+// ViewModel
 
 @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
 @HiltViewModel
@@ -92,14 +92,9 @@ class RomListViewModel @Inject constructor(
     private val localRoms: LocalRomIndex,
 ) : ViewModel() {
 
-    /**
-     * What this list is a list *of*.
-     *
-     * The screen is the same either way — same rows, same letter jumping, same
-     * download gesture — so the two only part company at the three places that
-     * actually ask the question: which ROMs, what a refresh fetches, and which
-     * folders to check for what the user already has.
-     */
+    /** What this list is a list of. The screen is identical either way; the two
+     *  part company only over which ROMs, what a refresh fetches, and which
+     *  folders to check. */
     private sealed interface Source {
         data class Platform(val id: Int) : Source
         data class Collection(val id: Int) : Source
@@ -109,12 +104,8 @@ class RomListViewModel @Inject constructor(
         savedStateHandle.get<Int>(Route.RomList.ARG)?.let(Source::Platform)
             ?: Source.Collection(checkNotNull(savedStateHandle[Route.CollectionRoms.ARG]))
 
-    /**
-     * Regional copies of one game are folded into a single row.  A No-Intro set
-     * lists "Game (USA)", "Game (Europe)" and "Game (Japan)" under three nearly
-     * identical names, which is unreadable at list scale; the variants stay
-     * reachable from the row's detail screen.
-     */
+    /** Regional copies fold into one row: a No-Intro set lists three nearly
+     *  identical names. The variants stay reachable from the detail screen. */
     private val groups: StateFlow<List<RomGroup>> =
         when (source) {
             is Source.Platform   -> repo.observeRoms(source.id)
@@ -127,8 +118,7 @@ class RomListViewModel @Inject constructor(
                     regionsOf        = repo::regionsOf,
                 )
             }
-            // Folding a few thousand ROMs is too much to do on the main thread
-            // every time the sync writes a page.
+            // A few thousand ROMs, refolded every time the sync writes a page.
             .flowOn(Dispatchers.Default)
             .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
@@ -139,13 +129,9 @@ class RomListViewModel @Inject constructor(
     fun setFilter(text: String) { _filter.value = text }
 
     /**
-     * The rows as the screen draws them: the filter applied, then cut into the
-     * letter runs the sticky headers sit on.
-     *
-     * A filtered list comes back as one unlabelled run.  Headers earn their
-     * space on a list of hundreds, where they are the only sign of where a
-     * flick landed; over a dozen matches they would only be a row of letters
-     * with a game under each.
+     * The rows as drawn: filtered, then cut into letter runs. A filtered list
+     * comes back as one unlabelled run, since headers only earn their space
+     * over hundreds of rows.
      */
     val sections: StateFlow<List<RomSection>> = combine(groups, _filter) { rows, filter ->
         val needle  = filter.trim()
@@ -156,8 +142,7 @@ class RomListViewModel @Inject constructor(
             else              -> listOf(RomSection(label = null, groups = matches))
         }
     }
-        // Same reason as the fold above: a platform can hold a few thousand
-        // rows, and this runs again on every keystroke.
+        // Same reason as the fold above, and this reruns on every keystroke.
         .flowOn(Dispatchers.Default)
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
@@ -165,26 +150,18 @@ class RomListViewModel @Inject constructor(
     val downloadStatus: StateFlow<Map<Int, DownloadStatus>> = queue.statusByRom
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyMap())
 
-    /**
-     * What the folders behind this list already hold, keyed by platform id.
-     *
-     * A platform list needs exactly one listing.  A collection spans platforms,
-     * so it needs one per platform it actually contains — which is why this is
-     * a map rather than the single [FolderContents] a platform would need: a
-     * row asks about its own platform and gets the right answer either way.
-     */
+    /** What the folders behind this list hold, keyed by platform id. A map
+     *  rather than one [FolderContents] because a collection spans platforms. */
     val onDevice: StateFlow<Map<Int, FolderContents>> =
         when (source) {
             is Source.Platform -> localRoms.revision.map { listOf(source.id) }
-            // Only the platforms the rows on screen actually belong to.
-            // Resolving every platform in the library would read a directory
-            // per system for a collection of a dozen games.
+            // Only the platforms the rows belong to: resolving the whole library
+            // would read a directory per system for a dozen games.
             is Source.Collection -> combine(localRoms.revision, groups) { _, rows ->
                 rows.flatMap { group -> group.variants.map { it.platformId } }.distinct()
             }
         }
-            // The sync writes the collection's ROMs in pages, and the set of
-            // platforms settles long before the last one lands.
+            // The sync pages the ROMs in, but the platform set settles early.
             .distinctUntilChanged()
             .mapLatest { platformIds ->
                 platformIds.mapNotNull { id ->
@@ -195,13 +172,8 @@ class RomListViewModel @Inject constructor(
             }
             .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyMap())
 
-    /**
-     * What the bar says this list is.
-     *
-     * Named rather than a flat "ROMs": a collection is two levels down from the
-     * row pinned above the platforms, and without its name there is nothing on
-     * screen to say which one the user opened.
-     */
+    /** What the bar says this list is. Named rather than a flat "ROMs": a
+     *  collection is two levels down and nothing else names it. */
     val title: StateFlow<String> = flow {
         val name = when (source) {
             is Source.Platform   -> platformDao.getById(source.id)?.displayName
@@ -210,7 +182,7 @@ class RomListViewModel @Inject constructor(
         emit(name ?: "ROMs")
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), "ROMs")
 
-    /** True when a row should name its platform — only a collection mixes them. */
+    /** True when a row should name its platform - only a collection mixes them. */
     val mixedPlatforms: Boolean = source is Source.Collection
 
     /** Rows with a long-press in flight; the detail fetch takes a moment. */
@@ -245,13 +217,8 @@ class RomListViewModel @Inject constructor(
         }
     }
 
-    /**
-     * Queue the copy this row stands for.
-     *
-     * A group can cover several regional variants, and the one shown is the
-     * preferred one — so that is what gets queued, and the message names its
-     * region so an unwanted pick is obvious enough to undo.
-     */
+    /** Queue the preferred variant, the one the row shows. The message names its
+     *  region so an unwanted pick is obvious enough to undo. */
     fun download(group: RomGroup) {
         if (group.key in _queueing.value) return
         viewModelScope.launch {
@@ -277,7 +244,7 @@ class RomListViewModel @Inject constructor(
     )
 }
 
-// ── Screen ────────────────────────────────────────────────────────────────────
+// Screen
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
@@ -301,23 +268,21 @@ fun RomListScreen(
     val haptics = LocalHapticFeedback.current
     val buttons = rememberButtonLayout()
 
-    // The filter field replaces the title rather than sitting under it: on a
-    // handheld in landscape the bar plus a second row of chrome is most of the
-    // list's height.
+    // The filter replaces the title rather than adding a row: in landscape two
+    // rows of chrome is most of the list's height.
     var filtering by rememberSaveable { mutableStateOf(false) }
     val filterField = rememberInputFieldHandle()
     val listState   = rememberLazyListState()
     val scope       = rememberCoroutineScope()
 
-    // Where every letter starts, shared by the two ways of jumping to one: the
-    // scroller's bubble reads it, the shoulder buttons step through it.
+    // Where every letter starts: the scroller's bubble reads it, the shoulder
+    // buttons step through it.
     val sectionIndex = remember(sections) { sectionIndexOf(sections) }
 
     LaunchedEffect(filtering) { if (filtering) filterField.requestFocus() }
 
-    // The row the controller is on.  It is both where X downloads from and
-    // where focus goes when the screen comes back from a ROM's detail page —
-    // a list of thousands is unusable if every trip into one starts at the top.
+    // The row the controller is on: where X downloads from, and where focus
+    // returns to from a detail page.
     var focusedKey by rememberSaveable { mutableStateOf<String?>(null) }
     val rowFocus   = remember { FocusRequester() }
     val focusedGroup = remember(sections, focusedKey) {
@@ -325,16 +290,13 @@ fun RomListScreen(
             section.groups.firstOrNull { it.key == focusedKey }
         }
     }
-    // Whatever the filter left on screen, or the top of the list: the
-    // remembered row may not have survived the last keystroke.
+    // The remembered row may not have survived the last keystroke.
     val focusTarget = focusedGroup?.key ?: sections.firstOrNull()?.groups?.firstOrNull()?.key
     RestoreFocus(rowFocus, ready = !filtering && focusTarget != null)
 
-    // Every keystroke narrows the list underneath; keeping the old scroll
-    // offset would leave the user somewhere in the middle of the matches, or
-    // past the end of them entirely.  Only on a real change, though — a
-    // rotation re-runs the effect with the filter it already had, and the
-    // list state it restored is the one worth keeping.
+    // Each keystroke narrows the list, so the old offset lands mid-matches or
+    // past the end. Only on a real change: a rotation re-runs the effect with
+    // the same filter, and the restored list state is the one worth keeping.
     var scrolledFor by rememberSaveable { mutableStateOf(filter) }
     LaunchedEffect(filter) {
         if (scrolledFor != filter) {
@@ -343,14 +305,9 @@ fun RomListScreen(
         }
     }
 
-    /**
-     * Put the controller's cursor on a row and keep it there.
-     *
-     * Asked for over a few frames because the two things this waits on happen
-     * on later ones: the requester has to move onto the row this names, and
-     * whatever took focus in the meantime — the back arrow, when the filter
-     * field it was on is torn down — has to be taken off it again.
-     */
+    /** Put the cursor on a row. Retried over a few frames: the requester has to
+     *  move onto the named row, and whatever grabbed focus meanwhile (the back
+     *  arrow, when the filter field is torn down) has to lose it. */
     fun focusRow(key: String?) {
         if (key == null) return
         focusedKey = key
@@ -363,13 +320,9 @@ fun RomListScreen(
     }
 
     /**
-     * Move the cursor to where a jump landed.
-     *
-     * A jump that scrolls the list but leaves focus on the row it started from
-     * puts the cursor off screen, and the next press on the D-pad snaps the
-     * list back to it — undoing the jump.  The rows carry their group key and
-     * the sticky headers carry a "section:" one, so the first row on screen is
-     * the first visible key that is not a header's.
+     * Move the cursor to where a jump landed, or the next D-pad press snaps the
+     * list back to the off-screen row and undoes the jump. Headers carry a
+     * "section:" key, so the first row is the first visible key without one.
      */
     suspend fun focusTopRow() {
         withFrameNanos { }
@@ -383,26 +336,18 @@ fun RomListScreen(
         filterField.hideKeyboard()
         viewModel.setFilter("")
         filtering = false
-        // Focus is inside the text field, which is about to stop existing.
-        // Left alone it lands on the first thing in the bar rather than back
-        // on the list the user was reading.
+        // Focus is in the field that is about to stop existing; left alone it
+        // lands on the bar rather than the list.
         focusRow(focusedKey ?: sections.firstOrNull()?.groups?.firstOrNull()?.key)
     }
 
-    // Back closes the field before it leaves the screen — the same thing the
-    // X in its place does, and what the gesture means everywhere else.
+    // Back closes the field before it leaves the screen.
     BackHandler(enabled = filtering) { closeFilter() }
 
     /**
-     * L1 and R1 step a letter at a time.
-     *
-     * This is a handheld with shoulder buttons and no second hand free for the
-     * scroller — a press per letter is the cheapest jump on the device, and it
-     * lands on the header so the letter is on screen when it stops.
-     *
-     * Consumed either way: at the ends of the list, and on a filtered list that
-     * has no letters left to step through, the button does nothing rather than
-     * falling through to whatever else might take it.
+     * L1 and R1 step a letter at a time, landing on the header so the letter is
+     * on screen. Consumed either way, so at the ends of the list and on a
+     * filtered one the button does nothing rather than falling through.
      */
     fun jumpSection(forwards: Boolean): Boolean {
         if (sectionIndex.isEmpty) return true
@@ -414,25 +359,21 @@ fun RomListScreen(
 
     GamepadHandler { action ->
         when (action) {
-            // A snackbar is on screen for a few seconds and cannot be tapped
-            // with a controller, so while one is offering something — Undo, or
-            // a way to the folder settings — Y takes the offer.  The label on
-            // it says which button, so this is not a hidden gesture.
+            // A snackbar cannot be tapped with a controller, so Y takes any
+            // standing offer. Its label names the button.
             GamepadAction.Search -> {
                 val offer = snackbarHostState.currentSnackbarData
                     ?.takeIf { it.visuals.actionLabel != null }
                 when {
                     offer != null -> offer.performAction()
-                    // Y otherwise opens the filter, and reopens the keyboard on
-                    // a filter already showing — the Search key puts it away,
-                    // and this is the way back.
+                    // Otherwise Y opens the filter, or reopens the keyboard the
+                    // Search key put away.
                     filtering     -> filterField.requestFocus()
                     else          -> filtering = true
                 }
                 true
             }
-            // The download gesture is a long-press, which a controller cannot
-            // make; on the buttons it is X on whatever row is focused.
+            // A controller cannot long-press, so X stands in for the gesture.
             GamepadAction.Download -> {
                 focusedGroup?.let {
                     haptics.performHapticFeedback(HapticFeedbackType.LongPress)
@@ -449,8 +390,7 @@ fun RomListScreen(
     }
     StickScroll(listState)
 
-    // Sync failures share the queue's snackbar host rather than stacking a
-    // second one on top of it.
+    // Sync failures share the queue's snackbar host.
     LaunchedEffect(error, buttons) {
         val message = error ?: return@LaunchedEffect
         val result = snackbarHostState.showSnackbar(
@@ -486,13 +426,12 @@ fun RomListScreen(
             TopAppBar(
                 title = {
                     if (filtering) {
-                        // Matches narrow as the text is typed, so the Search
-                        // key has nothing to submit and only puts the keyboard
-                        // away — same as the global search field.
+                        // Nothing to submit; Search only dismisses the keyboard,
+                        // same as the global search field.
                         OutlinedInputField(
                             value         = filter,
                             onValueChange = viewModel::setFilter,
-                            placeholder   = "Filter ROMs…",
+                            placeholder   = "Filter ROMs...",
                             imeAction     = EditorInfo.IME_ACTION_SEARCH,
                             handle        = filterField,
                             onImeAction   = { filterField.hideKeyboard() },
@@ -514,8 +453,7 @@ fun RomListScreen(
                         }
                     }
                 },
-                // The field needs the whole bar, and neither action means
-                // anything while the user is halfway through typing a name.
+                // The field needs the whole bar while it is open.
                 actions = {
                     if (!filtering) {
                         IconButton(
@@ -560,7 +498,7 @@ fun RomListScreen(
                 }
                 sections.isEmpty() && filter.isNotBlank() -> {
                     Text(
-                        text      = "No ROMs match “${filter.trim()}”.",
+                        text      = "No ROMs match \"${filter.trim()}\".",
                         style     = MaterialTheme.typography.bodyMedium,
                         color     = MaterialTheme.colorScheme.onSurfaceVariant,
                         textAlign = TextAlign.Center,
@@ -570,8 +508,7 @@ fun RomListScreen(
                 else -> {
                     LazyColumn(state = listState) {
                         sections.forEach { section ->
-                            // Sticky until the next letter pushes it off, so the
-                            // header stays readable through a long flick.
+                            // Sticky, so the letter stays readable through a flick.
                             section.label?.let { label ->
                                 stickyHeader(key = "section:$label") { SectionHeader(label) }
                             }
@@ -611,23 +548,16 @@ fun RomListScreen(
     }
 }
 
-/**
- * The most active download state across the copies of this game, so a row shows
- * "downloaded" whichever variant the user actually took.
- */
+/** The most active state across the copies, so a row reads "downloaded"
+ *  whichever variant the user took. */
 private fun RomGroup.downloadStatus(statuses: Map<Int, DownloadStatus>): DownloadStatus? =
     variants.mapNotNull { statuses[it.id] }
         .minByOrNull { STATUS_PRIORITY.indexOf(it) }
 
 /**
- * True when any copy of this game is already sitting in its platform's folder.
- *
- * Independent of the download queue: a library the user filled from a PC, or
- * kept across a reinstall, has no queue rows at all but is very much "already
- * downloaded" from where they are standing.
- *
- * Each variant is checked against its own platform's listing, because a
- * collection's rows do not all live in the same folder.
+ * True when any copy is already in its platform's folder. Independent of the
+ * queue, so a library filled from a PC or kept across a reinstall still counts.
+ * Each variant checks its own platform, since a collection spans folders.
  */
 private fun RomGroup.isOnDevice(byPlatform: Map<Int, FolderContents>): Boolean =
     variants.any { rom ->
@@ -635,11 +565,8 @@ private fun RomGroup.isOnDevice(byPlatform: Map<Int, FolderContents>): Boolean =
         contents.readable && contents.contains(rom.fsName)
     }
 
-/**
- * Filter match against both names a row can be found by: the title it shows,
- * and the filename underneath it — a user hunting "sonic2" is typing what the
- * file is called, not what the game is called.
- */
+/** Matches the title or the filename: someone typing "sonic2" is naming the
+ *  file, not the game. */
 private fun RomGroup.matches(needle: String): Boolean =
     primary.displayName.contains(needle, ignoreCase = true) ||
         primary.fsNameNoTags.contains(needle, ignoreCase = true)
@@ -652,12 +579,8 @@ private val STATUS_PRIORITY = listOf(
     DownloadStatus.CANCELLED,
 )
 
-/**
- * The letter a run of rows sits under.
- *
- * Opaque on purpose: a sticky header has the list scrolling underneath it, and
- * a transparent one would have two titles drawn over each other.
- */
+/** The letter a run of rows sits under. Opaque, or the list scrolling beneath
+ *  the sticky header shows through it. */
 @Composable
 private fun SectionHeader(label: String) {
     Surface(
@@ -680,7 +603,7 @@ private fun RomRow(
     coverUrl: String?,
     status: DownloadStatus?,
     onDevice: Boolean,
-    /** Name the platform on the supporting line — a collection mixes them. */
+    /** Name the platform on the supporting line - a collection mixes them. */
     showPlatform: Boolean,
     queueing: Boolean,
     onClick: () -> Unit,
@@ -711,14 +634,14 @@ private fun RomRow(
                 if (group.hasVariants) {
                     "${group.size} versions"
                 } else {
-                    "${rom.fsExtension.uppercase()}  ·  ${rom.fsSizeBytes.formatSize()}"
+                    "${rom.fsExtension.uppercase()}  -  ${rom.fsSizeBytes.formatSize()}"
                 },
-            ).joinToString("  ·  ")
+            ).joinToString("  -  ")
             // The score rides on this line rather than taking one of its own:
             // a list of these is scrolled past a screenful at a time, and a
             // third line per row costs more than the number is worth.  The
             // text yields to the pill instead of pushing it off a narrow
-            // screen — the flags and size are still legible truncated.
+            // screen - the flags and size are still legible truncated.
             //
             // Both sit on one baseline because Material3 reads a supporting
             // slot whose first and last baseline differ as wrapped text, and
@@ -727,7 +650,7 @@ private fun RomRow(
             // annotates rather than centred against it.
             Row {
                 Text(
-                    if (flags.isEmpty()) detail else "$flags  ·  $detail",
+                    if (flags.isEmpty()) detail else "$flags  -  $detail",
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.alignByBaseline().weight(1f, fill = false),

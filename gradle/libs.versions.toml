@@ -1,10 +1,10 @@
 [versions]
-# ── SDK / toolchain ───────────────────────────────────────────────────────────
+# SDK / toolchain
 agp                     = "8.7.3"
 kotlin                  = "2.1.0"
 ksp                     = "2.1.0-1.0.29"
 
-# ── AndroidX / Jetpack ────────────────────────────────────────────────────────
+# AndroidX / Jetpack
 coreKtx                 = "1.15.0"
 lifecycle               = "2.8.7"
 activityCompose         = "1.10.0"
@@ -15,20 +15,20 @@ workManager             = "2.10.0"
 datastore               = "1.1.2"
 securityCrypto          = "1.1.0-alpha06"
 
-# ── DI ────────────────────────────────────────────────────────────────────────
+# DI
 hilt                    = "2.54"
 hiltNavigationCompose   = "1.2.0"
 
-# ── Network ───────────────────────────────────────────────────────────────────
+# Network
 retrofit                = "2.11.0"
 okhttp                  = "4.12.0"
 kotlinxSerialization    = "1.7.3"
 retrofitKotlinxConverter = "1.0.0"
 
-# ── Image loading ─────────────────────────────────────────────────────────────
+# Image loading
 coil                    = "3.0.4"
 
-# ── Test ──────────────────────────────────────────────────────────────────────
+# Test
 junit                   = "4.13.2"
 junitExt                = "1.2.1"
 espresso                = "3.6.1"

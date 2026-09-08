@@ -38,48 +38,32 @@ import androidx.compose.ui.viewinterop.AndroidView
 import kotlinx.coroutines.launch
 
 /*
- * These fields wrap a real android.widget.EditText in the stock Material3
- * outlined chrome, rather than using Compose's own text fields.
+ * A real android.widget.EditText in stock Material3 outlined chrome, because
+ * Compose re-implements the IME protocol and both implementations break on a
+ * landscape handheld:
  *
- * Compose does not use native text controls: BasicTextField lays out and draws
- * the text itself and re-implements the IME protocol, and both of its
- * implementations get that wrong in ways this app trips over on a landscape
- * handheld:
+ *  - `OutlinedTextField(value, onValueChange)` keeps the text outside the field,
+ *    so every keystroke round-trips through recomposition and renders a frame
+ *    behind: backspaced characters linger, the password mask lands late.
+ *  - The `TextFieldState` fields answer getExtractedText once and never call
+ *    updateExtractedText, so landscape Gboard's full-screen extract editor -
+ *    the field you actually type into - never refreshes. Still true in
+ *    foundation 1.12.
  *
- *  - The old `OutlinedTextField(value, onValueChange)` keeps the text outside
- *    the field, so every keystroke round-trips through recomposition before it
- *    reaches the buffer the IME reads.  It renders a frame behind: backspaced
- *    characters linger, the password mask lands late.
- *  - The newer state-based fields (`TextFieldState`) fix that, but their
- *    InputConnection answers getExtractedText once and never calls
- *    updateExtractedText.  In landscape Gboard runs its full-screen extract
- *    editor — the field you actually type into is then the keyboard's mirror of
- *    ours — and that mirror is never refreshed, so typing shows nothing.  This
- *    is still true in Compose foundation 1.12.
- *
- * TextView implements the whole IME contract natively, including extracted-text
- * updates and password masking, so the extract editor mirrors it correctly and
- * so does the field itself.  When Compose's Material3 gains a text field without
- * these problems this can go back to being a few lines of Compose.
+ * TextView implements the contract natively. This can go back to a few lines of
+ * Compose once Material3 has a text field without these problems.
  */
 
 enum class InputKind { Text, Uri, Password }
 
 /**
- * In landscape the IME runs a full-screen editor that covers the app, so nothing
- * on screen says which field is being edited.  Two native levers exist and both
- * are set here; on a Retroid Pocket Nova (Gboard) neither is honoured, so on
- * that device the full-screen editor stays unlabelled.  Nothing else the editor
- * draws is ours except the action button, and naming a field there reads as if
- * the button sets that field rather than moving to it, so it stays generic:
+ * In landscape the IME's full-screen editor covers the app, so nothing says
+ * which field is being edited. Both native levers are set here and Gboard
+ * honours neither, so on a Retroid Pocket Nova the editor stays unlabelled:
  *
- *  - [EditorInfo.hintText] is the field's name, which the IME is meant to show
- *    as the hint of its extracted editor.  TextView fills it in from the view's
- *    hint, which we don't want drawn in the app (Material3 already draws a
- *    label), so set it on the EditorInfo directly.  `dumpsys input_method`
- *    confirms it arrives — `hintText=Username` — and Gboard draws nothing.
- *  - [EditorInfo.IME_FLAG_NO_FULLSCREEN] asks the IME not to take over the
- *    screen at all.  Gboard ignores it here too, full-screen either way.
+ *  - [EditorInfo.hintText] is set directly rather than through the view's hint,
+ *    which Material3 already draws. `dumpsys input_method` confirms it arrives.
+ *  - [EditorInfo.IME_FLAG_NO_FULLSCREEN] asks the IME not to take the screen.
  */
 private class LabelledEditText(context: Context) : EditText(context) {
     var imeLabel: CharSequence? = null
@@ -100,32 +84,21 @@ private class LabelledEditText(context: Context) : EditText(context) {
     }
 
     /**
-     * While the input connection is being built, refuse to look for the next
-     * focusable view.
+     * Refuse to look for the next focusable view while the input connection is
+     * being built. TextView asks twice, to set the IME's navigate flags, and a
+     * LazyColumn answers by composing past its viewport hunting for a focusable
+     * View it will never find among Compose nodes - laying out a few thousand
+     * rows on the main thread and ANRing as the keyboard opens.
      *
-     * TextView asks that question — twice, up and down — to decide whether to
-     * set the IME's navigate-next and navigate-previous flags.  Inside a
-     * Compose hierarchy the search is answered by walking the composition, and
-     * a LazyColumn answers it by composing its way past the viewport looking
-     * for something focusable to hand back.  It never finds one, because the
-     * rows are Compose nodes and this search only accepts Views — so over a
-     * list of a few thousand ROMs it lays out the entire list on the main
-     * thread and the app ANRs the moment the keyboard opens.
-     *
-     * Nothing here wants the answer anyway: fields hand off to each other
-     * through [InputFieldHandle.requestFocus] from their own IME action, not
-     * through the IME's navigate keys.  Only this one question is refused;
-     * ordinary focus traversal, D-pad included, still goes through.
+     * Nothing wants the answer: fields hand off through
+     * [InputFieldHandle.requestFocus]. Ordinary traversal still goes through.
      */
     override fun focusSearch(direction: Int): View? =
         if (startingInput) null else super.focusSearch(direction)
 }
 
-/**
- * Handle for driving a field from outside — pass one to [OutlinedInputField] and
- * call [requestFocus] from the previous field's `onImeAction` to walk a form, or
- * [hideKeyboard] to put the keyboard away when the action ends the editing.
- */
+/** Handle for driving a field from outside: [requestFocus] from the previous
+ *  field's `onImeAction` walks a form, [hideKeyboard] ends the editing. */
 @Stable
 class InputFieldHandle {
     internal var view: EditText? = null
@@ -138,11 +111,8 @@ class InputFieldHandle {
         imm.showSoftInput(target, 0)
     }
 
-    /**
-     * Close the keyboard, leaving the field focused so typing can resume with a
-     * tap.  TextView does this itself for [EditorInfo.IME_ACTION_DONE] but for
-     * no other action, so a Search or Go field has to ask.
-     */
+    /** Close the keyboard, leaving the field focused. TextView does this itself
+     *  for [EditorInfo.IME_ACTION_DONE] only, so Search and Go have to ask. */
     fun hideKeyboard() {
         val target = view ?: return
         val imm = target.context
@@ -180,9 +150,8 @@ fun OutlinedInputField(
     val colors = OutlinedTextFieldDefaults.colors()
     val scope  = rememberCoroutineScope()
 
-    // The EditText owns the text; onValueChange only mirrors it outwards.  Keep
-    // the latest lambda so the TextWatcher installed once in factory{} does not
-    // capture a stale one.
+    // The EditText owns the text; onValueChange only mirrors it outwards. Held
+    // fresh so the TextWatcher installed once in factory{} sees the latest.
     val currentOnValueChange by rememberUpdatedState(onValueChange)
     val currentOnImeAction   by rememberUpdatedState(onImeAction)
     val currentImeAction     by rememberUpdatedState(imeAction)
@@ -200,8 +169,8 @@ fun OutlinedInputField(
             indication        = null,
             enabled           = enabled,
         ) {
-            // Taps on the padding and label area should focus the field too —
-            // the EditText only covers the inner row.
+            // The EditText covers only the inner row; taps on the padding and
+            // label should focus it too.
             editText?.let { view ->
                 view.requestFocus()
                 val imm = view.context
@@ -269,12 +238,10 @@ fun OutlinedInputField(
                                 }
                             }
 
-                            // A plain Enter — hardware keyboard, or a keyboard
-                            // whose action key sends a key event — never reaches
-                            // the action listener with our action id.  Take it
-                            // here instead, consuming the down so TextView does
-                            // not also advance focus, and acting on the up so the
-                            // stray up cannot land on the field we moved to.
+                            // A plain Enter never reaches the action listener
+                            // with our action id. Consume the down so TextView
+                            // does not also advance focus, and act on the up so
+                            // the stray up misses the field we moved to.
                             setOnKeyListener { _, keyCode, event ->
                                 val handler = currentOnImeAction
                                 val isEnter = keyCode == KeyEvent.KEYCODE_ENTER ||
@@ -288,7 +255,7 @@ fun OutlinedInputField(
                             }
 
                             // Feed focus into the Material chrome so the border
-                            // and floating label react the way they normally do.
+                            // and floating label react normally.
                             var focus: FocusInteraction.Focus? = null
                             setOnFocusChangeListener { _, hasFocus ->
                                 scope.launch {
@@ -330,9 +297,8 @@ fun OutlinedInputField(
                             view.textCursorDrawable = cursorDrawable
                         }
 
-                        // Only push text in when it changed underneath us —
-                        // rewriting it on every recomposition would fight the
-                        // user's cursor.
+                        // Only push text in when it changed underneath us, or
+                        // the rewrite fights the user's cursor.
                         if (view.text.toString() != value) {
                             view.setText(value)
                             view.setSelection(value.length)

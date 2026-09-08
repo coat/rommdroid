@@ -53,7 +53,7 @@ jobs:
 
       # No signing secrets here: the debug build type signs with the committed
       # app/debug.keystore, so this runs fine on PRs from forks. That key is
-      # shared on purpose — see README-signing.md.
+      # shared on purpose - see README-signing.md.
       - name: Build debug APK
         env:
           # Same monotonic counter the release workflow uses, so debug APKs

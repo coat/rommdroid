@@ -15,32 +15,28 @@ import javax.inject.Inject
 import javax.inject.Singleton
 
 /**
- * Where a platform's ROMs get written.
- *
- * [treeUri] is a SAF tree the app holds a persisted grant on. [subfolder], when
- * non-null, is a directory *underneath* that tree which the download creates on
- * demand — that is how one grant on a base "ROMs" folder serves every platform.
+ * Where a platform's ROMs get written. [treeUri] is a SAF tree the app holds a
+ * persisted grant on; [subfolder] is a directory underneath it, created on
+ * demand, which is how one grant serves every platform.
  */
 data class DownloadTarget(
     val treeUri: String,
     val subfolder: String?,
     /** Human-readable destination, e.g. "Roms/snes". */
     val displayPath: String,
-    /** True when this came from a per-platform override rather than the base folder. */
+    /** True for a per-platform override rather than the base folder. */
     val isOverride: Boolean,
 )
 
 /**
- * Resolves the download destination for a platform, in precedence order:
+ * Resolves a platform's download destination, in precedence order:
  *
- *  1. an explicit per-platform folder override (a different directory entirely)
- *  2. the base folder + a user-renamed subfolder
- *  3. the base folder + the ES-DE convention name for the platform
+ *  1. a per-platform folder override (a different directory entirely)
+ *  2. the base folder plus a user-renamed subfolder
+ *  3. the base folder plus the ES-DE convention name
  *
- * Returns null only when the user has configured nothing at all.
- *
- * Every write to a mapping goes through here so that none can skip the mirror
- * in [FolderMappingBackup] — the copy that survives a database rebuild.
+ * Null only when nothing is configured. Every write goes through here so none
+ * can skip the [FolderMappingBackup] mirror.
  */
 @Singleton
 class DownloadTargetRepository @Inject constructor(
@@ -50,7 +46,7 @@ class DownloadTargetRepository @Inject constructor(
     private val backup: FolderMappingBackup,
 ) {
 
-    // ── The configured mappings ───────────────────────────────────────────────
+    // The configured mappings
 
     fun observeBaseFolder(): Flow<BaseFolderEntity?> = baseFolderDao.observe()
 
@@ -65,10 +61,8 @@ class DownloadTargetRepository @Inject constructor(
         customSub = subfolderDao.getForPlatform(platform.id)?.name,
     )
 
-    /**
-     * Pure form, so the settings UI can render every row from already-collected
-     * flows instead of issuing a query per platform.
-     */
+    /** Pure form, so the settings UI renders from already-collected flows rather
+     *  than a query per platform. */
     fun resolve(
         platform: PlatformEntity,
         base: BaseFolderEntity?,
@@ -98,7 +92,7 @@ class DownloadTargetRepository @Inject constructor(
     fun defaultSubfolder(platform: PlatformEntity): String =
         EsDePlatformFolders.forPlatform(platform.slug, platform.fsSlug)
 
-    // ── Writes ────────────────────────────────────────────────────────────────
+    // Writes
 
     suspend fun setBaseFolder(uri: String, displayPath: String) {
         baseFolderDao.upsert(BaseFolderEntity(folderUri = uri, displayPath = displayPath))
@@ -126,13 +120,8 @@ class DownloadTargetRepository @Inject constructor(
 
     suspend fun baseFolder(): BaseFolderEntity? = baseFolderDao.get()
 
-    /**
-     * Copies the mappings out to where a database rebuild cannot reach them.
-     *
-     * Written whole rather than incrementally: it is three small tables, it runs
-     * only when the user changes a folder, and a mirror rebuilt from the
-     * database each time cannot drift from it.
-     */
+    /** Copies the mappings beyond a database rebuild's reach. Written whole:
+     *  three small tables, only on a folder change, and it cannot drift. */
     private suspend fun mirror() {
         val base = baseFolderDao.get()
         backup.save(

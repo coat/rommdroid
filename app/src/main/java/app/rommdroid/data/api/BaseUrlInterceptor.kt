@@ -8,12 +8,9 @@ import javax.inject.Inject
 import javax.inject.Singleton
 
 /**
- * Rewrites the base URL of every request to the user-configured server URL.
- *
- * Retrofit requires the base URL to be known at construction time, but the user
- * sets it during first-run setup.  This interceptor makes it work by keeping a
- * placeholder base URL in the Retrofit instance and replacing the host/scheme at
- * request time from [CredentialRepository.serverUrl].
+ * Rewrites every request's scheme and host to [CredentialRepository.serverUrl].
+ * Retrofit needs a base URL at construction time and the user does not supply
+ * one until first-run setup, so it is built with a placeholder.
  */
 @Singleton
 class BaseUrlInterceptor @Inject constructor(

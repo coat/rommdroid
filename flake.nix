@@ -1,5 +1,5 @@
 {
-  description = "RomMDroid — Android ROM manager client for RomM";
+  description = "RomMDroid - Android ROM manager client for RomM";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
@@ -21,7 +21,7 @@
           };
         };
 
-        # ── Android SDK configuration ─────────────────────────────────────────
+        # Android SDK configuration
         # Bump these to upgrade the SDK toolchain; everything else follows.
         androidSdkConfig = {
           buildToolsVersions = ["35.0.0"];
@@ -37,7 +37,7 @@
         androidComposition = pkgs.androidenv.composeAndroidPackages androidSdkConfig;
         androidSdk = androidComposition.androidsdk;
 
-        # ── Build inputs ──────────────────────────────────────────────────────
+        # Build inputs
         buildInputs = with pkgs; [
           # JVM
           jdk21
@@ -69,7 +69,7 @@
         # Override: `nix develop .#withStudio`
         studioInputs = buildInputs ++ [pkgs.android-studio];
 
-        # ── Shell hook: point Gradle + SDK at the Nix-managed SDK ────────────
+        # Shell hook: point Gradle + SDK at the Nix-managed SDK
         androidEnvHook = ''
           export ANDROID_SDK_ROOT="${androidSdk}/libexec/android-sdk"
           export ANDROID_HOME="$ANDROID_SDK_ROOT"
@@ -81,7 +81,7 @@
           # Make adb / emulator available without full PATH tricks
           export PATH="$ANDROID_SDK_ROOT/platform-tools:$ANDROID_SDK_ROOT/emulator:$PATH"
 
-          # AGP downloads its own aapt2 from Maven — a generic-linux binary that
+          # AGP downloads its own aapt2 from Maven - a generic-linux binary that
           # NixOS cannot exec. Point it at the SDK's patchelf'd copy instead.
           # Passed as -D rather than in gradle.properties so the /nix/store path
           # stays out of the repo, and because the property name contains dots
@@ -94,7 +94,7 @@
           echo "  gradle $(gradle --version 2>/dev/null | grep '^Gradle' | awk '{print $2}')"
         '';
       in {
-        # ── devShells ─────────────────────────────────────────────────────────
+        # devShells
 
         devShells = {
           # Default: CLI build only (fast, no Android Studio)
@@ -110,12 +110,12 @@
             shellHook =
               androidEnvHook
               + ''
-                echo "  Android Studio included — launch with: android-studio"
+                echo "  Android Studio included - launch with: android-studio"
               '';
           };
         };
 
-        # ── Packages ──────────────────────────────────────────────────────────
+        # Packages
         # Build the debug APK via Gradle
         packages.default = pkgs.stdenv.mkDerivation {
           pname = "rommdroid";

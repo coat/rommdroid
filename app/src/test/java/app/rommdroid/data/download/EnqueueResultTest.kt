@@ -24,7 +24,7 @@ class EnqueueResultTest {
             .Queued("Final Fantasy VII", listOf("1_1", "1_2", "1_3"))
             .asMessage()
 
-        assertEquals("Queued Final Fantasy VII · 3 files", message.text)
+        assertEquals("Queued Final Fantasy VII - 3 files", message.text)
     }
 
     @Test

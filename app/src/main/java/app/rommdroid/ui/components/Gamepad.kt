@@ -63,30 +63,19 @@ import kotlin.math.abs
 import kotlin.math.sign
 
 /*
- * Controller support.
+ * Controller support for Android gaming handhelds, where the buttons are the
+ * primary input. The framework turns the left stick and D-pad into focus moves
+ * and stops there: `clickable` treats only DPAD_CENTER and Enter as a press,
+ * and KEYCODE_BUTTON_B is Back to nobody. So the map lives here.
  *
- * This app is used on Android gaming handhelds, where the buttons are the
- * primary input and the touchscreen is the thing you fall back to.  Android
- * gives that almost nothing for free: the framework turns the left stick and
- * the D-pad into focus moves, and stops there.  Every face button reports its
- * own keycode that nothing in the platform interprets — Compose's `clickable`
- * treats only DPAD_CENTER and Enter as a press, and `KEYCODE_BUTTON_B` is not
- * Back to anyone.  So the map lives here.
- *
- * Key events go to whatever holds focus, and on this app that can be a native
- * EditText inside an AndroidView — which swallows the whole key dispatch, so a
- * `Modifier.onKeyEvent` anywhere in the composition stops hearing anything the
- * moment a text field is focused.  The buttons are therefore read at the
- * Activity, above focus entirely, and handed to whichever screen registered
- * last through [GamepadDispatcher].
+ * Buttons are read at the Activity rather than through `Modifier.onKeyEvent`,
+ * because a focused native EditText swallows the whole key dispatch, and handed
+ * to whichever screen registered last with [GamepadDispatcher].
  */
 
 /**
- * What a button means, rather than which button it is.
- *
- * Screens bind these; the keycodes they arrive on are this file's business.
- * [Confirm] is missing on purpose — A is rewritten to DPAD_CENTER before it
- * gets here, so it presses whatever holds focus like a D-pad click would.
+ * What a button means, rather than which button it is. No Confirm: A is
+ * rewritten to DPAD_CENTER upstream so it presses whatever holds focus.
  */
 enum class GamepadAction(
     /** True for the ones a held button should keep firing: they move the list. */
@@ -103,14 +92,8 @@ enum class GamepadAction(
     PageDown(repeatable = true),
 }
 
-/**
- * The map itself.
- *
- * Face buttons follow the Android layout — A at the bottom, B on the right —
- * which is what the keycodes mean regardless of how the device silkscreens
- * them.  A handheld that swaps A and B in its system settings swaps them here
- * too, which is what a user who set that expects.
- */
+/** Face buttons follow the Android layout (A bottom, B right), which is what the
+ *  keycodes mean however the device silkscreens them. */
 private fun actionFor(keyCode: Int): GamepadAction? = when (keyCode) {
     KeyEvent.KEYCODE_BUTTON_B      -> GamepadAction.Back
     KeyEvent.KEYCODE_BUTTON_X      -> GamepadAction.Download
@@ -124,21 +107,16 @@ private fun actionFor(keyCode: Int): GamepadAction? = when (keyCode) {
     else                           -> null
 }
 
-/** Where a stick has to reach before it counts as pushed, and where it stops counting. */
 private const val StickDeadzone   = 0.25f
-/** Triggers are analog; these are the pull depths that latch and release a press. */
+/** Analog trigger depths that latch and release a press. */
 private const val TriggerPress    = 0.55f
 private const val TriggerRelease  = 0.35f
-/** How fast a fully deflected right stick runs the list, in dp per second. */
+/** Fully deflected right stick, in dp per second. */
 private const val StickScrollDp   = 2200f
 
 /**
- * The live button map: screens register what they answer to, the Activity feeds
- * key events in.
- *
- * Handlers are consulted newest first, so a screen shadows the app-wide
- * bindings the nav host puts in underneath it, and returning false from one
- * passes the button along to whatever registered before it.
+ * The live button map. Handlers are consulted newest first, so a screen shadows
+ * the nav host's app-wide bindings and returning false falls through to them.
  */
 @Stable
 class GamepadDispatcher {
@@ -160,13 +138,8 @@ class GamepadDispatcher {
         return handlers.toList().asReversed().any { it(action) }
     }
 
-    /**
-     * Returns true when the event was ours, and the caller must not pass it on.
-     *
-     * Both halves of a press are consumed once the down was: leaving the up to
-     * the system means a button that opened a screen sends a stray release into
-     * whatever opened, which on a focused button is a second press.
-     */
+    /** True when the event was ours. Both halves of a press are consumed: a
+     *  stray release lands on whatever the press opened, as a second press. */
     fun onKeyEvent(event: KeyEvent): Boolean {
         val action = actionFor(event.keyCode) ?: return false
         if (event.action != KeyEvent.ACTION_DOWN) return true
@@ -176,15 +149,13 @@ class GamepadDispatcher {
     }
 
     /**
-     * Sticks and triggers, which arrive as axes rather than keys.
+     * Sticks and triggers, which arrive as axes rather than keys. L2 and R2 are
+     * analog on most handhelds and send no keycode, so a pull becomes a press
+     * with hysteresis so a resting trigger does not chatter.
      *
-     * L2 and R2 are analog on most handhelds and send no keycode at all, so a
-     * pull is turned into a press here, with a lower release point than press
-     * point so a trigger resting near the threshold does not chatter.
-     *
-     * Reading this must not consume the event: the framework synthesises D-pad
-     * keys from the left stick only for motion events nothing handled, and that
-     * synthesis is the entire reason the stick can drive focus.
+     * Must not consume the event: the framework synthesises the left stick's
+     * D-pad keys only for motion events nothing handled, and that synthesis is
+     * why the stick drives focus at all.
      */
     fun onMotionEvent(event: MotionEvent) {
         if (!event.isFromSource(InputDevice.SOURCE_JOYSTICK)) return
@@ -206,13 +177,8 @@ class GamepadDispatcher {
         rightTrigger = trigger(rightTrigger, right, GamepadAction.PageDown)
     }
 
-    /**
-     * Forget what is being held.
-     *
-     * A stick deflected as the app goes to the background sends its release
-     * event to whatever took the foreground, so without this the list would
-     * still be scrolling when the user came back to it.
-     */
+    /** Forget what is held. A stick deflected as the app backgrounds sends its
+     *  release elsewhere, and the list would still be scrolling on return. */
     fun release() {
         scrollAxis.value = 0f
         leftTrigger  = false
@@ -228,13 +194,8 @@ class GamepadDispatcher {
 
 val LocalGamepad = staticCompositionLocalOf { GamepadDispatcher() }
 
-/**
- * Bind buttons for as long as this composable is in the tree.
- *
- * Return true from [onAction] to take a button, false to let the binding
- * underneath have it — an unbound button on a screen still reaches the app-wide
- * ones the nav host registers.
- */
+/** Bind buttons while this composable is in the tree. Return true from [onAction]
+ *  to take a button, false to fall through to the binding underneath. */
 @Composable
 fun GamepadHandler(onAction: (GamepadAction) -> Boolean) {
     val dispatcher = LocalGamepad.current
@@ -247,11 +208,9 @@ fun GamepadHandler(onAction: (GamepadAction) -> Boolean) {
 }
 
 /**
- * Run [state] from the right stick.
- *
- * Deflection is squared so a small push creeps and a full push crosses the
- * list, and the scroll is driven per frame rather than per motion event: a
- * stick held still sends nothing at all, and the list would stop with it.
+ * Run [state] from the right stick. Deflection is squared so a small push
+ * creeps, and the scroll runs per frame rather than per motion event because a
+ * stick held still sends nothing and the list would stop with it.
  */
 @Composable
 fun StickScroll(state: LazyListState) {
@@ -269,32 +228,22 @@ fun StickScroll(state: LazyListState) {
             val now = withFrameNanos { it }
             val elapsed = if (previousFrame == 0L) 0f else (now - previousFrame) / 1_000_000_000f
             previousFrame = now
-            // The first frame of a push has no elapsed time to scale by, and
-            // one long pause (a slow recomposition) should not teleport.
+            // Clamped so the first frame and a slow recomposition do not teleport.
             val step = elapsed.coerceIn(0f, 0.05f)
             state.scrollBy(sign(deflection) * deflection * deflection * pxPerSecond * step)
         }
     }
 }
 
-/**
- * A screenful, which is what the triggers move.
- *
- * Slightly less than the viewport so a row stays on screen across the jump —
- * landing on an entirely new set of names gives a reader nothing to place
- * themselves by.
- */
+/** A screenful, slightly under the viewport so a row survives the jump and the
+ *  reader has something to place themselves by. */
 suspend fun LazyListState.scrollPage(direction: Int) {
     val viewport = layoutInfo.viewportSize.height
     if (viewport > 0) animateScrollBy(viewport * 0.85f * direction)
 }
 
-/**
- * True while a physical controller is attached.
- *
- * The hint bar and nothing else depends on this: the bindings are always live,
- * but telling a phone user which button downloads a ROM is noise.
- */
+/** True while a controller is attached. Only the hint bar depends on it; the
+ *  bindings are always live. */
 @Composable
 fun rememberHasGamepad(): Boolean {
     val context = LocalContext.current
@@ -318,17 +267,12 @@ private fun gamepadAttached(): Boolean = InputDevice.getDeviceIds().any { id ->
         sources and InputDevice.SOURCE_JOYSTICK == InputDevice.SOURCE_JOYSTICK
 }
 
-// ── Hints ─────────────────────────────────────────────────────────────────────
+// Hints
 
 /**
- * A button as the bar draws it.
- *
- * Named for the keycode it arrives on, which Android names the Xbox way, and
- * printed as whichever lettering the user said their handheld uses — the same
- * four positions carry different letters on a Nintendo-style pad, and a hint
- * that names a letter the device does not print there is worse than no hint.
- * The shoulders and the two small ones are the same on both, so they carry one
- * glyph.  See [GamepadLayout].
+ * A button as the bar draws it: named for its keycode, which Android names the
+ * Xbox way, but printed in whichever lettering the user said their handheld
+ * uses. The shoulders and small buttons letter the same in both. [GamepadLayout]
  */
 enum class GamepadButton(private val xbox: String, private val nintendo: String = xbox) {
     /** Bottom. */ A("A", "B"),
@@ -346,23 +290,12 @@ enum class GamepadButton(private val xbox: String, private val nintendo: String 
 
 data class GamepadHint(val button: GamepadButton, val label: String)
 
-/**
- * The lettering in force, set once at the top of the app from the stored
- * preference.
- *
- * Not `staticCompositionLocalOf`: this one changes while the app is running —
- * the moment the user picks the other style in settings — and only the hints
- * that read it need to repaint.
- */
+/** The lettering in force. Not `staticCompositionLocalOf`: it changes when the
+ *  user picks the other style in settings. */
 val LocalGamepadLayout = compositionLocalOf { GamepadLayout.Xbox }
 
-/**
- * The lettering to print a button in, or null when there is no controller and
- * so nothing to name.
- *
- * The two questions come as one because every caller asks both: a screen either
- * names its buttons in the user's lettering or does not name them at all.
- */
+/** The lettering to print a button in, or null when there is no controller.
+ *  One call because every caller asks both questions together. */
 @Composable
 fun rememberButtonLayout(): GamepadLayout? {
     val layout   = LocalGamepadLayout.current
@@ -370,30 +303,18 @@ fun rememberButtonLayout(): GamepadLayout? {
     return if (attached) layout else null
 }
 
-/**
- * A snackbar action, named with the button that performs it.
- *
- * "Undo" and "Set folder" are the only things in the app that appear for a few
- * seconds and then leave, and a controller cannot tap them — so the screens
- * that raise them bind Y to whatever action is on screen, and the label says
- * so.  Without the button in the text there is nothing to tell the user the
- * offer is theirs to take.
- */
+/** A snackbar action, named with the button that performs it. A controller
+ *  cannot tap one, so the screens that raise them bind Y and say so. */
 fun String?.withButton(button: GamepadButton, layout: GamepadLayout?): String? =
-    if (this != null && layout != null) "${button.glyph(layout)}  ·  $this" else this
+    if (this != null && layout != null) "${button.glyph(layout)}  -  $this" else this
 
 /**
- * The legend along the bottom of a screen.
+ * The legend along the bottom of a screen. Drawn only with a controller
+ * attached, and scrolling rather than wrapping so portrait keeps it one row.
  *
- * A button map nobody can see is a button map nobody uses, and this is the
- * convention every handheld frontend already trained its users on.  It draws
- * only with a controller attached, and scrolls rather than wrapping so a narrow
- * screen in portrait keeps the bar one row tall.
- *
- * The app is edge to edge, and a Scaffold's bottom bar is laid out over the
- * system bars rather than above them — so the hints have to step out of the
- * navigation bar themselves, or the gesture pill sits on top of the last two
- * of them.  The colour still runs to the bottom edge; only the row moves.
+ * The app is edge to edge and a Scaffold's bottom bar lays out over the system
+ * bars, so the row insets itself or the gesture pill covers the last hints. The
+ * colour still runs to the bottom edge.
  */
 @Composable
 fun GamepadHintBar(hints: List<GamepadHint>, modifier: Modifier = Modifier) {
@@ -427,11 +348,8 @@ fun GamepadHintBar(hints: List<GamepadHint>, modifier: Modifier = Modifier) {
     }
 }
 
-/**
- * The button itself: a letter in a ring for the four face buttons, a rounded
- * tab for the shoulders and the two little ones, since "Start" does not fit in
- * a circle and a shoulder button is not round on any device.
- */
+/** A letter in a ring for the face buttons, a rounded tab for the rest: "Start"
+ *  does not fit in a circle and no shoulder button is round. */
 @Composable
 private fun ButtonGlyph(button: GamepadButton) {
     val glyph = button.glyph(LocalGamepadLayout.current)
@@ -452,23 +370,16 @@ private fun ButtonGlyph(button: GamepadButton) {
     }
 }
 
-// ── Focus ─────────────────────────────────────────────────────────────────────
+// Focus
 
 /**
- * A list row that can be reached with a controller.
+ * A list row reachable with a controller. Material's focus overlay is a few
+ * percent of a ripple, invisible on a handheld, and with a controller the
+ * focused row is the cursor.
  *
- * Material draws focus as a few percent of a ripple overlay, which is invisible
- * on a handheld screen — and with a controller the focused row is the cursor,
- * so it has to read at arm's length in daylight.  This paints the row and puts
- * a bar down its leading edge.
- *
- * The click handlers belong to this modifier rather than being applied after
- * it, because the highlight has to sit before the focusable node in the chain
- * to hear about it at all.
- *
- * It is drawn over the row rather than behind it: a ListItem paints its own
- * opaque container, so anything drawn underneath — the obvious way to tint a
- * row — is covered by the row itself and never appears.
+ * The click handlers belong to this modifier: the highlight has to sit before
+ * the focusable node in the chain to hear about focus. And it draws over the
+ * row, not behind it, since a ListItem paints its own opaque container.
  */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
@@ -506,10 +417,7 @@ fun Modifier.gamepadRow(
         )
 }
 
-/**
- * The same visible focus for anything that is not a row — the icons in a top
- * bar, mostly, which a stick can still walk into.
- */
+/** The same visible focus for anything that is not a row, mostly top-bar icons. */
 @Composable
 fun Modifier.focusOutline(): Modifier {
     var focused by remember { mutableStateOf(false) }
@@ -530,24 +438,14 @@ fun Modifier.focusOutline(): Modifier {
 }
 
 /**
- * Put focus back where the user left it.
+ * Put focus back where the user left it. Scroll position survives a screen
+ * teardown but focus does not, so without this the list looks right until the
+ * first press jumps to row one. [ready] gates the request until a row is
+ * composed under the requester. Controller only.
  *
- * Without this every trip into a ROM and back starts at the top of a list of
- * thousands, because focus does not survive the screen being torn down — the
- * scroll position does, so the list even looks right until the first press
- * jumps to row one.  [ready] gates the request until there is a row composed
- * under the requester to take it; a couple of frames of slack covers the list
- * still being laid out when the screen first appears.
- *
- * Only with a controller attached.  Focus is a cursor to someone holding one
- * and nothing at all to someone holding a phone, and taking it unasked would
- * leave a highlighted row sitting on a screen that is only ever touched.
- *
- * Waiting on the window's focus is what makes this land on a cold start.  The
- * rows are composed while the launch animation is still running and the window
- * has no focus to give out yet, so a request made then is dropped — the list
- * comes up with nothing selected and the user's first press is spent picking
- * row one instead of moving to row two.
+ * Waiting on window focus is what makes this land on a cold start: rows compose
+ * while the launch animation still runs and the window has no focus to give,
+ * and a request made then is silently dropped.
  */
 @Composable
 fun RestoreFocus(focusRequester: FocusRequester, ready: Boolean) {
@@ -556,19 +454,14 @@ fun RestoreFocus(focusRequester: FocusRequester, ready: Boolean) {
     val wanted = ready && windowFocused && rememberHasGamepad()
     LaunchedEffect(focusRequester, wanted) {
         if (!wanted) return@LaunchedEffect
-        // requestFocus() reports nothing.  It throws only when no node holds
-        // the requester at all; on a node that is attached but not yet placed
-        // — which is every row on the frame a list first composes — it quietly
-        // does nothing.  So there is no success to wait for, and the ask is
-        // repeated over the next few frames, by which point the list has been
-        // laid out and one of them lands.
+        // requestFocus() reports nothing: it throws only when no node holds the
+        // requester, and does nothing at all on a node attached but not yet
+        // placed. So there is no success to await, and the ask repeats until
+        // the list has been laid out.
         repeat(5) {
             // requestFocusFromTouch, not requestFocus: the window comes up in
-            // touch mode — it was launched by a tap — and in touch mode the
-            // framework refuses focus to every view, so Compose's own request
-            // lands on nothing and reports nothing.  This is the one public
-            // call that leaves touch mode first, and it is the whole reason the
-            // old first press only ever "woke" the list instead of moving it.
+            // touch mode, where the framework refuses focus to every view, and
+            // this is the one public call that leaves touch mode first.
             if (!view.hasFocus()) view.requestFocusFromTouch()
             runCatching { focusRequester.requestFocus() }
             withFrameNanos { }

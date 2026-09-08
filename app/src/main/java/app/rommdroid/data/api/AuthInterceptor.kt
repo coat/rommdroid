@@ -6,10 +6,8 @@ import app.rommdroid.data.repository.CredentialRepository
 import javax.inject.Inject
 import javax.inject.Singleton
 
-/**
- * Attaches the stored Client API Token to every outgoing request.
- * Falls back to HTTP Basic if only username+password are stored (initial setup).
- */
+/** The stored client API token on every request, falling back to HTTP Basic
+ *  while setup still has only a username and password. */
 @Singleton
 class AuthInterceptor @Inject constructor(
     private val credentials: CredentialRepository,
@@ -22,7 +20,6 @@ class AuthInterceptor @Inject constructor(
                 .header("Authorization", "Bearer $token")
                 .build()
         } else {
-            // Basic auth fallback during initial token exchange
             val basic = credentials.basicAuthHeader
             if (basic != null) {
                 chain.request().newBuilder()

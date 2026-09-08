@@ -21,19 +21,16 @@ import javax.inject.Singleton
 @InstallIn(SingletonComponent::class)
 object NetworkModule {
 
-    /**
-     * Lenient Json: ignores unknown keys from the API so new server versions
-     * don't crash the app, and coerces null to default for non-nullable fields.
-     */
+    /** Lenient, so a newer server's unknown keys and unexpected nulls do not
+     *  crash the app. */
     @Provides
     @Singleton
     fun provideJson(): Json = Json {
         ignoreUnknownKeys = true
         coerceInputValues  = true
         isLenient          = true
-        // Request bodies rely on Kotlin defaults (e.g. CreateTokenRequest.scopes).
-        // Without this, kotlinx.serialization drops any field equal to its default
-        // and the server rejects the body as missing a required field (422).
+        // Request bodies rely on Kotlin defaults (CreateTokenRequest.scopes).
+        // Without this they are dropped and the server answers 422.
         encodeDefaults     = true
     }
 
@@ -56,13 +53,12 @@ object NetworkModule {
         }
         .connectTimeout(15, TimeUnit.SECONDS)
         .readTimeout(30, TimeUnit.SECONDS)
-        // Downloads use their own OkHttp call with no timeout
         .build()
 
     @Provides
     @Singleton
     fun provideRetrofit(client: OkHttpClient, json: Json): Retrofit = Retrofit.Builder()
-        // Placeholder base URL — BaseUrlInterceptor rewrites it at runtime
+        // Placeholder; BaseUrlInterceptor rewrites it per request.
         .baseUrl("http://localhost/")
         .client(client)
         .addConverterFactory(json.asConverterFactory("application/json".toMediaType()))

@@ -9,8 +9,8 @@ plugins {
     alias(libs.plugins.ksp)
 }
 
-// Every CI build gets a distinct versionCode so APKs are distinguishable and
-// installable over one another. Locally there's no run number, so it stays 1.
+// A distinct versionCode per CI build, so two APKs install over one another.
+// Locally there is no run number, so it stays 1.
 val buildNumber = (System.getenv("BUILD_NUMBER")
     ?: providers.gradleProperty("buildNumber").orNull)
     ?.toIntOrNull() ?: 1
@@ -22,22 +22,20 @@ android {
 
     defaultConfig {
         applicationId   = "app.rommdroid"
-        minSdk          = 29          // Android 10 — clean SAF, scoped storage
+        minSdk          = 29          // Android 10 - clean SAF, scoped storage
         targetSdk       = 35
         versionCode     = buildNumber
         versionName     = "0.5.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
-        // Launcher label. Build types override this so a debug build sitting
-        // next to a release one on the same device is tellable apart at a
-        // glance — see the resValue in the debug block below.
+        // Build types override this so a debug install sitting next to a release
+        // one is tellable apart; see the debug block below.
         resValue("string", "app_launcher_name", "RomMDroid")
     }
 
-    // Release signing. Values come from local.properties (untracked) or, for CI,
-    // the matching env vars. Without them the release build stays unsigned and
-    // will not install on a device.
+    // From local.properties (untracked) or the matching CI env vars. Without
+    // them the release build stays unsigned and will not install.
     val keystoreProps = Properties().apply {
         val f = rootProject.file("local.properties")
         if (f.exists()) f.inputStream().use { load(it) }
@@ -48,10 +46,9 @@ android {
     val releaseStorePath = signingValue("release.storeFile", "RELEASE_STORE_FILE")
 
     signingConfigs {
-        // Checked into the repo on purpose. The SDK's auto-generated debug key
-        // differs per machine and per CI runner, so debug APKs from two sources
-        // can't be installed over each other. A shared key fixes that; the
-        // credentials are the Android debug defaults and guard nothing.
+        // Checked in on purpose: the SDK's generated debug key differs per
+        // machine, so debug APKs from two sources cannot install over each
+        // other. These are the Android debug defaults and guard nothing.
         getByName("debug") {
             storeFile     = file("debug.keystore")
             storePassword = "android"
@@ -82,8 +79,7 @@ android {
         debug {
             applicationIdSuffix = ".debug"
             versionNameSuffix   = "-debug"
-            // Overrides the defaultConfig value above (build types win), so the
-            // debug launcher icon reads "RomMDroid (Beta)".
+            // Build types win, so the debug launcher reads "RomMDroid (Beta)".
             resValue("string", "app_launcher_name", "RomMDroid (Beta)")
         }
     }
@@ -114,13 +110,13 @@ android {
 }
 
 dependencies {
-    // ── Core ─────────────────────────────────────────────────────────────────
+    // Core
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.lifecycle.runtime)
     implementation(libs.androidx.lifecycle.viewmodel)
     implementation(libs.androidx.activity.compose)
 
-    // ── Compose BOM ──────────────────────────────────────────────────────────
+    // Compose BOM
     val composeBom = platform(libs.compose.bom)
     implementation(composeBom)
     implementation(libs.compose.ui)
@@ -131,43 +127,43 @@ dependencies {
     debugImplementation(libs.compose.ui.tooling)
     debugImplementation(libs.compose.ui.test.manifest)
 
-    // ── Navigation ───────────────────────────────────────────────────────────
+    // Navigation
     implementation(libs.navigation.compose)
     implementation(libs.hilt.navigation.compose)
 
-    // ── DI ───────────────────────────────────────────────────────────────────
+    // DI
     implementation(libs.hilt.android)
     ksp(libs.hilt.compiler)
     implementation(libs.hilt.work)
     ksp(libs.hilt.work.compiler)
 
-    // ── Room ─────────────────────────────────────────────────────────────────
+    // Room
     implementation(libs.room.runtime)
     implementation(libs.room.ktx)
     ksp(libs.room.compiler)
 
-    // ── WorkManager ──────────────────────────────────────────────────────────
+    // WorkManager
     implementation(libs.work.runtime.ktx)
 
-    // ── DataStore + Security ─────────────────────────────────────────────────
+    // DataStore + Security
     implementation(libs.datastore.preferences)
     implementation(libs.security.crypto)
 
-    // ── Network ──────────────────────────────────────────────────────────────
+    // Network
     implementation(libs.retrofit)
     implementation(libs.retrofit.kotlinx.serialization)
     implementation(libs.okhttp)
     implementation(libs.okhttp.logging)
     implementation(libs.kotlinx.serialization.json)
 
-    // ── Images ───────────────────────────────────────────────────────────────
+    // Images
     implementation(libs.coil.compose)
     implementation(libs.coil.network.okhttp)
 
-    // ── DocumentFile (SAF) ───────────────────────────────────────────────────
+    // DocumentFile (SAF)
     implementation(libs.documentfile)
 
-    // ── Tests ────────────────────────────────────────────────────────────────
+    // Tests
     testImplementation(libs.junit)
     androidTestImplementation(libs.junit.ext)
     androidTestImplementation(libs.espresso.core)

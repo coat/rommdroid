@@ -40,7 +40,7 @@ import app.rommdroid.ui.components.scrollPage
 import app.rommdroid.util.artworkUrl
 import javax.inject.Inject
 
-// ── ViewModel ─────────────────────────────────────────────────────────────────
+// ViewModel
 
 @HiltViewModel
 class CollectionListViewModel @Inject constructor(
@@ -62,13 +62,8 @@ class CollectionListViewModel @Inject constructor(
         refresh()
     }
 
-    /**
-     * Re-fetch the list.
-     *
-     * The platform list already synced these on the way in, so this is for a
-     * collection renamed or emptied while the app was open — and for the trip
-     * back after a failure, since the cached list is all there is offline.
-     */
+    /** The platform list already synced these on the way in, so this is for a
+     *  collection changed while the app was open, and for retrying a failure. */
     fun refresh() {
         viewModelScope.launch {
             _syncing.value = true
@@ -91,7 +86,7 @@ class CollectionListViewModel @Inject constructor(
     )
 }
 
-// ── Screen ────────────────────────────────────────────────────────────────────
+// Screen
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -107,8 +102,7 @@ fun CollectionListScreen(
     val listState = rememberLazyListState()
     val scope     = rememberCoroutineScope()
 
-    // Same as the platform list: the row the controller is on survives a trip
-    // into a collection, so coming back does not start at the top.
+    // As on the platform list: the focused row survives a trip into a collection.
     var focusedId by rememberSaveable { mutableStateOf<Int?>(null) }
     val rowFocus  = remember { FocusRequester() }
     val focusTarget = focusedId?.takeIf { id -> collections.any { it.id == id } }
@@ -170,9 +164,8 @@ fun CollectionListScreen(
                         Button(onClick = { viewModel.refresh() }) { Text("Retry") }
                     }
                 }
-                // Reachable when the last collection is deleted on the server
-                // while this screen is open — the row that leads here is gone
-                // by then, so this is the way back rather than a dead end.
+                // Reachable when the last collection is deleted while this
+                // screen is open, and the row that leads here is already gone.
                 collections.isEmpty() -> {
                     Column(
                         Modifier.align(Alignment.Center).padding(32.dp),
@@ -238,8 +231,7 @@ private fun CollectionRow(
             Text(collection.name, maxLines = 1, overflow = TextOverflow.Ellipsis)
         },
         supportingContent = {
-            // The count is the server's, so it is right before the collection
-            // has ever been opened and its ROMs fetched.
+            // The server's count, so it is right before the ROMs are fetched.
             val games = if (collection.romCount == 1) "1 game" else "${collection.romCount} games"
             Text(games, maxLines = 1, overflow = TextOverflow.Ellipsis)
         },
@@ -250,8 +242,7 @@ private fun CollectionRow(
                     contentDescription = collection.name,
                     modifier           = Modifier.size(40.dp),
                 )
-                // Favourites is the one collection RomM makes itself, and the
-                // heart is what it wears in the web UI.
+                // Favourites is RomM's own, and wears a heart in the web UI.
                 collection.isFavorite -> Icon(
                     imageVector        = Icons.Default.Favorite,
                     contentDescription = null,

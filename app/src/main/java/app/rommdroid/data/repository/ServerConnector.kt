@@ -14,13 +14,12 @@ import javax.inject.Singleton
 class ConnectionException(message: String) : Exception(message)
 
 /**
- * Points the app at a RomM server and gets it authenticated.
+ * Points the app at a RomM server and authenticates it, for first-run setup and
+ * for editing the connection in Settings alike.
  *
- * First-run setup and editing the connection in Settings do the same work, so
- * both go through here.  Credentials are written before the verification
- * requests — the interceptors read them from [CredentialRepository] — so every
- * path restores the previous ones when the attempt fails, leaving a user who
- * mistyped a password still connected to the server they were using.
+ * The interceptors read credentials from [CredentialRepository], so they have to
+ * be written before the verification requests. Every path restores the previous
+ * ones on failure, leaving a mistyped password still connected.
  */
 @Singleton
 class ServerConnector @Inject constructor(
@@ -28,16 +27,13 @@ class ServerConnector @Inject constructor(
     private val api: RomMApi,
 ) {
 
-    /**
-     * Signs in as [username], exchanging the password for a client API token.
-     * Needed whenever the account changes, and the only way back in once a
-     * token has been revoked or the account's password has changed.
-     */
+    /** Signs in as [username], exchanging the password for a client API token.
+     *  The only way back in once a token is revoked or a password changed. */
     suspend fun signIn(serverUrl: String, username: String, password: String): Result<Unit> =
         attempt(serverUrl) { url ->
             credentials.serverUrl = url
-            // Any stored token belongs to the previous sign-in; drop it so the
-            // exchange below goes out as Basic auth for what was just entered.
+            // Drop the previous sign-in's token so the exchange below goes out
+            // as Basic auth for what was just entered.
             credentials.apiToken = null
             credentials.setBasicCredentials(username, password)
 
@@ -46,31 +42,23 @@ class ServerConnector @Inject constructor(
             val token = api.createClientToken(CreateTokenRequest(name = TOKEN_NAME)).rawToken
             if (token != null) {
                 credentials.apiToken = token
-                // Basic auth was only for the exchange — don't keep the password.
+                // Basic auth was only for the exchange.
                 credentials.clearPassword()
             }
         }
 
-    /**
-     * Moves the existing sign-in to [serverUrl] — the same account reached at a
-     * new address.  Fails when the stored token is no good there, which is the
-     * point at which the caller has to ask for a password and use [signIn].
-     */
+    /** Moves the existing sign-in to [serverUrl]. Fails when the stored token is
+     *  no good there, at which point the caller falls back to [signIn]. */
     suspend fun moveTo(serverUrl: String): Result<Unit> =
         attempt(serverUrl) { url ->
             credentials.serverUrl = url
             api.heartbeat()
-            // heartbeat is unauthenticated, so it only proves the server is
-            // there.  /users/me is what proves the token still opens it.
+            // heartbeat is unauthenticated; /users/me proves the token works.
             api.getMe()
         }
 
-    /**
-     * Records [serverUrl] without checking it, for a server that isn't reachable
-     * from wherever the device is at the moment.  Only the address moves — the
-     * token and the account stay as they are — so a wrong one costs nothing but
-     * another edit once the app next fails to reach it.
-     */
+    /** Records [serverUrl] unchecked, for a server out of reach right now. Only
+     *  the address moves, so a wrong one costs one more edit. */
     fun setServerUrl(serverUrl: String): Result<Unit> {
         val url = normalize(serverUrl) ?: return Result.failure(ConnectionException(BAD_URL))
         credentials.serverUrl = url
@@ -102,11 +90,8 @@ class ServerConnector @Inject constructor(
     }
 }
 
-/**
- * A bare Retrofit [HttpException] only says "HTTP 422 Unprocessable Content",
- * which hides the reason the server gave.  RomM puts that in a JSON "detail"
- * field, so pull it out when it's there.
- */
+/** A bare [HttpException] says only "HTTP 422 Unprocessable Content"; RomM's
+ *  reason is in a JSON "detail" field. */
 private fun Exception.describe(): String {
     val fallback = message ?: "Connection failed"
     if (this !is HttpException) return fallback

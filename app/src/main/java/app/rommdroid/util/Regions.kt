@@ -1,25 +1,16 @@
 package app.rommdroid.util
 
-/**
- * Region tags as they appear on ROMs, normalised for display and comparison.
- *
- * RomM populates `regions` by parsing the filename tags, so the same region
- * arrives under whichever convention the set uses: No-Intro spells it out
- * ("USA", "Europe"), GoodTools abbreviates to a single letter ("U", "E", "J"),
- * and some sets use the ISO code directly.  All three have to collapse onto one
- * value or the same game shows up as two different "regions".
- */
+// The same region reaches us under whichever convention the ROM set uses:
+// No-Intro ("USA"), GoodTools ("U"), or the bare ISO code. All three have to
+// collapse onto one value or a game shows up as two regions.
 
-/** Pseudo-regions that have no ISO code but do have an obvious glyph. */
+/** Pseudo-regions with no ISO code but an obvious glyph. */
 private const val WORLD = "WORLD"
 private const val ASIA  = "ASIA"
 
-/**
- * Lower-cased alias → canonical code.  Canonical codes are ISO 3166 alpha-2
- * wherever one exists, which is what lets [flagOf] derive the emoji instead of
- * this table carrying one per entry — and what lets the device locale's country
- * be used directly as a region preference.
- */
+/** Lower-cased alias -> canonical code. Canonical codes are ISO 3166 alpha-2
+ *  where one exists, so [flagOf] can derive the emoji and the device locale's
+ *  country works directly as a region preference. */
 private val ALIASES: Map<String, String> = buildMap {
     fun alias(code: String, vararg names: String) {
         put(code.lowercase(), code)
@@ -57,18 +48,15 @@ private val ALIASES: Map<String, String> = buildMap {
     alias("TR", "tur", "turkey")
 }
 
-/** Tokens that appear in the same `(…)` slot as a region but are not one. */
+/** Tokens that appear in the same `(...)` slot as a region but are not one. */
 private val NON_REGION_TAGS = setOf(
     "proto", "prototype", "beta", "demo", "sample", "kiosk", "unl", "unlicensed",
     "pirate", "aftermarket", "virtual console", "gamecube", "switch online",
     "en", "fr", "de", "es", "it", "ja", "nl", "pt", "sv", "no", "da", "fi", "zh", "ko",
 )
 
-/**
- * Canonical code for [raw], or the trimmed upper-cased input when the tag is
- * not a region we know.  Never returns blank for non-blank input, so unknown
- * regions still group and display as themselves rather than vanishing.
- */
+/** Canonical code for [raw], else the trimmed upper-cased input. Never blank for
+ *  non-blank input, so unknown regions display as themselves. */
 fun normalizeRegion(raw: String): String {
     val key = raw.trim().lowercase()
     if (key.isEmpty()) return ""
@@ -78,24 +66,19 @@ fun normalizeRegion(raw: String): String {
 /** Emoji for a canonical region code, or null when there is no sensible glyph. */
 fun regionFlag(code: String): String? = when (val c = normalizeRegion(code)) {
     ""      -> null
-    WORLD   -> "🌍"   // 🌍
-    ASIA    -> "🌏"   // 🌏
+    WORLD   -> "🌍"
+    ASIA    -> "🌏"
     else    -> flagOf(c)
 }
 
-/**
- * What to render for a region: the flag when one exists, otherwise a short
- * text code so unmapped regions are still distinguishable at a glance.
- */
+/** The flag when one exists, else a short text code so unmapped regions stay
+ *  distinguishable. */
 fun regionLabel(code: String): String {
     val c = normalizeRegion(code)
     return regionFlag(c) ?: c.take(3)
 }
 
-/**
- * Regional-indicator pair for a two-letter code.  Android's emoji font renders
- * these as flags; anything that is not two A–Z letters has no flag.
- */
+/** Regional-indicator pair, which Android's emoji font renders as a flag. */
 private fun flagOf(code: String): String? {
     if (code.length != 2 || code.any { it !in 'A'..'Z' }) return null
     val base = 0x1F1E6 - 'A'.code
@@ -104,11 +87,8 @@ private fun flagOf(code: String): String? {
 }
 
 /**
- * Best-effort regions for a ROM filename, used when the server left `regions`
- * empty — common for ROMs it could not identify, which are exactly the ones the
- * user most needs help telling apart.
- *
- * Only `(…)` groups are considered; `[…]` is the dump-status slot in both the
+ * Best-effort regions from a ROM filename, for when the server left `regions`
+ * empty. Only `(...)` groups count; `[...]` is the dump-status slot in both the
  * GoodTools and No-Intro conventions and never holds a region.
  */
 fun parseRegionsFromFileName(fsName: String): List<String> {
@@ -126,11 +106,8 @@ fun parseRegionsFromFileName(fsName: String): List<String> {
     return out.toList()
 }
 
-/**
- * One-line region summary for a list row: "🇺🇸 🇪🇺 🇯🇵", trimmed to [max] entries
- * with a "+N" tail so a game released in a dozen territories does not push the
- * rest of the row off screen.  Blank when nothing is known.
- */
+/** One-line region summary for a list row, trimmed to [max] entries with a "+N"
+ *  tail. Blank when nothing is known. */
 fun regionSummary(regions: List<String>, max: Int = 4): String {
     val labels = regions.map(::regionLabel).filter { it.isNotEmpty() }
     if (labels.isEmpty()) return ""

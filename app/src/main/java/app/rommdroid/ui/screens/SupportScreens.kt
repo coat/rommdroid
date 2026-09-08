@@ -72,9 +72,7 @@ import app.rommdroid.util.regionSummary
 import java.util.Locale
 import javax.inject.Inject
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Search
-// ─────────────────────────────────────────────────────────────────────────────
 
 @OptIn(FlowPreview::class)
 @HiltViewModel
@@ -93,17 +91,15 @@ class SearchViewModel @Inject constructor(
         .debounce(300)
         .mapLatest { q ->
             if (q.length < 2) return@mapLatest emptyList()
-            // Search the server so every platform is covered, not just the ones
-            // already synced into Room; drop to the cache only if it is down.
+            // The server covers every platform; Room covers only synced ones.
             val roms = try {
                 repo.searchRemote(q).also { _offline.value = false }
             } catch (e: Exception) {
                 _offline.value = true
                 repo.searchLocal(q)
             }
-            // Same fold as the platform list, so a search for "zelda" does not
-            // return the same game five times over.  The key carries the
-            // platform id, so cross-platform hits stay separate rows.
+            // Same fold as the platform list, but the key carries the platform
+            // id so cross-platform hits stay separate rows.
             groupRoms(
                 roms             = roms,
                 preferredRegions = regionPreference(Locale.getDefault().country),
@@ -157,20 +153,17 @@ fun SearchScreen(
     val listState = rememberLazyListState()
     val scope     = rememberCoroutineScope()
 
-    // The row a controller is on, so X can queue it.  Nothing restores focus
-    // here the way the ROM list does: this screen opens on an empty query, and
-    // what it opens for is the typing.
+    // The row a controller is on, so X can queue it. No focus restore: this
+    // screen opens on an empty query and what it opens for is the typing.
     var focusedKey by remember { mutableStateOf<String?>(null) }
     val focusedGroup = results.firstOrNull { it.key == focusedKey }
 
     GamepadHandler { action ->
         when (action) {
             GamepadAction.Search -> {
-                // A snackbar cannot be tapped with a controller, so while one is
-                // offering something Y takes the offer; the label names the
-                // button.  Otherwise Y goes back to the field, which is where
-                // this screen starts and the one place the buttons cannot
-                // otherwise reach once focus is down in the results.
+                // A snackbar cannot be tapped with a controller, so Y takes any
+                // standing offer. Otherwise Y returns to the field, which the
+                // buttons cannot otherwise reach from down in the results.
                 val offer = snackbarHostState.currentSnackbarData
                     ?.takeIf { it.visuals.actionLabel != null }
                 if (offer != null) offer.performAction() else queryField.requestFocus()
@@ -190,10 +183,9 @@ fun SearchScreen(
     }
     StickScroll(listState)
 
-    // Opening search is asking to type, and on a controller there is no way to
-    // tap into the field — so it takes focus itself, one frame in, once the
-    // view behind it is attached to the window.  Only on a fresh query: coming
-    // back from a ROM should not reopen the keyboard over the results.
+    // A controller cannot tap into the field, so it takes focus itself one frame
+    // in, once the view is attached. Only on a fresh query, so returning from a
+    // ROM does not reopen the keyboard over the results.
     LaunchedEffect(Unit) {
         if (query.isEmpty()) {
             withFrameNanos { }
@@ -226,16 +218,14 @@ fun SearchScreen(
         topBar = {
             TopAppBar(
                 title = {
-                    // Results follow the query as it is typed, so the Search
-                    // key has nothing to submit — it just puts the keyboard
-                    // away so the list underneath it is visible.  Without a
-                    // handler nothing happens at all: TextView's built-in
-                    // default hides the IME for Done but not for Search, and a
-                    // full-screen IME re-opens over the results straight away.
+                    // Results follow the query as typed, so Search has nothing
+                    // to submit and only dismisses the keyboard. A handler is
+                    // required: TextView's default hides the IME for Done but
+                    // not for Search.
                     OutlinedInputField(
                         value         = query,
                         onValueChange = { viewModel.query.value = it },
-                        placeholder   = "Search ROMs…",
+                        placeholder   = "Search ROMs...",
                         imeAction     = EditorInfo.IME_ACTION_SEARCH,
                         handle        = queryField,
                         onImeAction   = { queryField.hideKeyboard() },
@@ -289,11 +279,11 @@ fun SearchScreen(
                     supportingContent = {
                         val flags = regionSummary(group.regions)
                         val detail = if (group.hasVariants) {
-                            "${rom.platformDisplayName}  ·  ${group.size} versions"
+                            "${rom.platformDisplayName}  -  ${group.size} versions"
                         } else {
                             rom.platformDisplayName
                         }
-                        Text(if (flags.isEmpty()) detail else "$flags  ·  $detail")
+                        Text(if (flags.isEmpty()) detail else "$flags  -  $detail")
                     },
                     trailingContent = {
                         if (group.key in queueing) {
@@ -310,9 +300,7 @@ fun SearchScreen(
     }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Downloads
-// ─────────────────────────────────────────────────────────────────────────────
 
 @HiltViewModel
 class DownloadsViewModel @Inject constructor(
@@ -341,8 +329,7 @@ fun DownloadsScreen(
     val listState = rememberLazyListState()
     val scope     = rememberCoroutineScope()
 
-    // X is the row's own trailing button, whichever one this row is showing:
-    // cancel while it runs, retry once it failed, remove once it is done.
+    // X mirrors the row's trailing button, whichever it is showing.
     var focusedId by remember { mutableStateOf<String?>(null) }
     val focused = items.firstOrNull { it.id == focusedId }
 
@@ -360,8 +347,7 @@ fun DownloadsScreen(
             }
             GamepadAction.PageUp   -> { scope.launch { listState.scrollPage(-1) }; true }
             GamepadAction.PageDown -> { scope.launch { listState.scrollPage(1) }; true }
-            // Start opened this screen; pressing it again closes it rather than
-            // stacking a second copy on the back stack.
+            // Start opened this screen; pressing it again closes rather than stacks.
             GamepadAction.Downloads -> { onBack(); true }
             else                    -> false
         }
@@ -412,10 +398,8 @@ fun DownloadsScreen(
                 Spacer(Modifier.height(12.dp))
                 Text("Nothing downloading", style = MaterialTheme.typography.titleMedium)
                 Spacer(Modifier.height(4.dp))
-                // The gesture and the button are the same action, and the one
-                // the reader has no way to perform is not worth naming.  The
-                // button is named in the user's own lettering, which is not
-                // always the X the keycode is called.
+                // Name only the affordance the reader can actually perform, in
+                // their own lettering, which is not always the keycode's "X".
                 val buttons = rememberButtonLayout()
                 Text(
                     if (buttons != null) {
@@ -433,7 +417,7 @@ fun DownloadsScreen(
 
         LazyColumn(state = listState, modifier = Modifier.fillMaxSize().padding(padding)) {
             if (active.isNotEmpty()) {
-                item { QueueHeader("In progress · ${active.size}") }
+                item { QueueHeader("In progress - ${active.size}") }
                 items(active, key = { it.id }) { item ->
                     DownloadRow(
                         item      = item,
@@ -483,15 +467,14 @@ private fun DownloadRow(
     onRemove: () -> Unit,
     onFocused: () -> Unit,
 ) {
-    // The whole row is the focus target, progress bar included: the trailing
-    // button is reachable as a second stop, but X on the row does the same
-    // thing without having to walk into it.
+    // The whole row is the focus target, so X does the trailing button's job
+    // without walking into it.
     Column(Modifier.gamepadRow(onClick = onClick, onFocused = onFocused)) {
         ListItem(
             headlineContent   = { Text(item.fileName, maxLines = 2) },
             supportingContent = {
                 Column {
-                    Text("${item.romName}  ·  ${item.platformName}")
+                    Text("${item.romName}  -  ${item.platformName}")
                     Text(
                         item.statusLine(),
                         style = MaterialTheme.typography.bodySmall,
@@ -503,8 +486,6 @@ private fun DownloadRow(
             },
             trailingContent = {
                 when (item.status) {
-                    // Cancelling is the only useful thing to do to a transfer
-                    // that has not finished; everything else is after the fact.
                     DownloadStatus.QUEUED, DownloadStatus.RUNNING ->
                         IconButton(onClick = onCancel, modifier = Modifier.focusOutline()) {
                             Icon(Icons.Default.Close, contentDescription = "Cancel")
@@ -536,26 +517,20 @@ private fun DownloadRow(
     }
 }
 
-/** One line saying where this download has got to, and where it is going. */
+/** Where this download has got to, and where it is going. */
 private fun DownloadItem.statusLine(): String = when (status) {
-    DownloadStatus.QUEUED    -> "Waiting  ·  ${totalBytes.formatSize()}  →  $destinationPath"
+    DownloadStatus.QUEUED    -> "Waiting  -  ${totalBytes.formatSize()}  ->  $destinationPath"
     DownloadStatus.RUNNING   ->
-        "${downloadedBytes.formatSize()} / ${totalBytes.formatSize()}  →  $destinationPath"
-    DownloadStatus.SUCCEEDED -> "Saved to $destinationPath  ·  ${totalBytes.formatSize()}"
+        "${downloadedBytes.formatSize()} / ${totalBytes.formatSize()}  ->  $destinationPath"
+    DownloadStatus.SUCCEEDED -> "Saved to $destinationPath  -  ${totalBytes.formatSize()}"
     DownloadStatus.FAILED    -> error ?: "Download failed"
     DownloadStatus.CANCELLED -> "Cancelled"
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Settings
-// ─────────────────────────────────────────────────────────────────────────────
 
-/**
- * Where a change to the server address or the account has got to.
- *
- * Distinct from [SetupState] because saving here does not leave the screen:
- * [Saved] is a confirmation the user reads in place, not a signal to navigate.
- */
+/** Distinct from [SetupState] because saving here does not leave the screen:
+ *  [Saved] is read in place, not a signal to navigate. */
 sealed interface ConnectionState {
     data object Idle : ConnectionState
     data object Loading : ConnectionState
@@ -564,14 +539,12 @@ sealed interface ConnectionState {
 }
 
 /**
- * Settings, including the server address and account the app is signed in with.
+ * Settings, including the server address and the signed-in account.
  *
- * The stored password is thrown away once setup has traded it for a client API
- * token, so there is nothing to pre-fill the password field with and nothing to
- * compare a new one against.  That splits the save into two cases: a server
- * address that moved keeps the token and only re-verifies, while a different
- * account — or a password that has since changed on the server — has to sign in
- * again for a fresh token.
+ * Setup trades the password for a client API token and throws it away, so there
+ * is nothing to pre-fill or compare against. Hence two save paths: an address
+ * that moved keeps the token and re-verifies, a different account or changed
+ * password signs in again for a fresh one.
  */
 @HiltViewModel
 class SettingsViewModel @Inject constructor(
@@ -587,12 +560,9 @@ class SettingsViewModel @Inject constructor(
     fun setGamepadLayout(layout: GamepadLayout) = buttonLayout.set(layout)
 
     private val _savedServerUrl = MutableStateFlow(credentials.serverUrl.orEmpty())
-    /**
-     * What is stored right now.  It seeds the field, and the field is compared
-     * against it to decide whether there is anything to save — so it is re-read
-     * after every save, which also replaces what was typed with the normalized
-     * form that was actually written.
-     */
+    /** What is stored right now: seeds the field and decides whether there is
+     *  anything to save. Re-read after each save, so the field ends up holding
+     *  the normalized form that was actually written. */
     val savedServerUrl: StateFlow<String> = _savedServerUrl.asStateFlow()
 
     private val _savedUsername = MutableStateFlow(credentials.username.orEmpty())
@@ -602,12 +572,9 @@ class SettingsViewModel @Inject constructor(
     val state: StateFlow<ConnectionState> = _state.asStateFlow()
 
     private val _canSaveUnverified = MutableStateFlow(false)
-    /**
-     * True after an address-only save failed to reach the server.  A handheld is
-     * often nowhere near the server when its address is being corrected, so the
-     * new address can still be recorded — nothing else about the sign-in changes
-     * and the app will simply fail to sync until it is right.
-     */
+    /** True after an address-only save failed to reach the server. A handheld is
+     *  rarely near it while the address is being corrected, and recording an
+     *  address that turns out wrong only costs a failed sync. */
     val canSaveUnverified: StateFlow<Boolean> = _canSaveUnverified.asStateFlow()
 
     fun save(serverUrl: String, username: String, password: String) {
@@ -624,8 +591,7 @@ class SettingsViewModel @Inject constructor(
 
         viewModelScope.launch {
             _state.value = ConnectionState.Loading
-            // Same account means the token still stands and only the address
-            // moved; a password means signing in again for a fresh one.
+            // No password means the token still stands and only the address moved.
             val addressOnly = password.isBlank()
             val result = if (addressOnly) {
                 connector.moveTo(serverUrl)
@@ -649,45 +615,30 @@ class SettingsViewModel @Inject constructor(
     }
 
     /**
-     * Clears a stale error once the user starts fixing the offending field.
-     *
-     * Deliberately leaves [ConnectionState.Saved] standing.  A save rewrites the
-     * URL field with the normalized form that was stored, and that write goes
-     * back out through the field's onValueChange the same way a keystroke does —
-     * clearing the state here would wipe the confirmation the save just earned.
-     * The screen hides it once there is something to save again instead.
+     * Clears a stale error once the user starts fixing the field. Leaves
+     * [ConnectionState.Saved] standing on purpose: a save rewrites the URL field
+     * with the normalized form, and that write arrives through onValueChange
+     * like a keystroke, so clearing here would wipe the confirmation.
      */
     fun clearError() {
         if (_state.value is ConnectionState.Error) _state.value = ConnectionState.Idle
         _canSaveUnverified.value = false
     }
 
-    /**
-     * Clears the stored credentials and the cached library.
-     *
-     * The cache goes because disconnecting is how the app is pointed at another
-     * server, and RomM's platform and ROM ids are per-server — keeping the old
-     * rows would show one server's platforms, and its cached metadata, under
-     * the other server's ids.
-     */
+    /** Clears credentials and the cached library. The cache goes because
+     *  disconnecting is how the app is pointed at another server, whose ids
+     *  would otherwise collide with the old server's rows. */
     fun disconnect() {
         credentials.clearAll()
         viewModelScope.launch {
-            // Confirming disconnect navigates straight to setup with
-            // `popUpTo(0)`, which clears this ViewModel and its scope while the
-            // wipe is still in flight.  NonCancellable lets it finish rather
-            // than leaving half a library behind under new credentials.
+            // Confirming navigates to setup with `popUpTo(0)`, clearing this
+            // scope mid-wipe; NonCancellable stops that leaving half a library.
             withContext(NonCancellable) { repo.clearLibraryCache() }
         }
     }
 
-    /**
-     * Drops the cached platforms and ROMs, keeping the connection.
-     *
-     * The escape hatch for a cache that has gone stale in a way a re-sync will
-     * not fix on its own.  Downloaded files, folder mappings and the download
-     * queue are untouched.
-     */
+    /** Escape hatch for a cache a re-sync will not fix. Downloaded files, folder
+     *  mappings and the queue are untouched. */
     fun clearLibraryCache() {
         viewModelScope.launch { repo.clearLibraryCache() }
     }
@@ -720,10 +671,8 @@ fun SettingsScreen(
     var showDisconnectDialog by remember { mutableStateOf(false) }
     var showClearCacheDialog by remember { mutableStateOf(false) }
 
-    // Every field ends in Done, which puts the keyboard away and returns to this
-    // screen.  Walking the fields with Next belongs to first-run setup: here the
-    // usual edit is one field, and in landscape the keyboard covers the app, so
-    // its action key has to be a way out rather than a way further in.
+    // Every field ends in Done, not Next: the usual edit here is one field, and
+    // in landscape the keyboard covers the app, so the action key is a way out.
     val save = { viewModel.save(serverUrl, username, password) }
     val dirty = serverUrl.trim() != savedServerUrl ||
         username.trim() != savedUsername ||
@@ -733,23 +682,21 @@ fun SettingsScreen(
     val scrollState = rememberScrollState()
 
     LaunchedEffect(state) {
-        // A save normalizes the URL before storing it, so show what was stored
-        // rather than what was typed — otherwise the field reads as unsaved.
+        // A save normalizes the URL, so re-seed from what was stored or the
+        // field reads as unsaved.
         if (state == ConnectionState.Saved) {
             serverUrl = savedServerUrl
             username  = savedUsername
             password  = ""
         }
-        // The error, and the fallback it can offer, land below the button that
-        // was just tapped — on a short screen that is off the bottom edge.
+        // The error and its fallback land below the button, off a short screen.
         if (state is ConnectionState.Error) scrollState.animateScrollTo(scrollState.maxValue)
     }
 
     val scope = rememberCoroutineScope()
     GamepadHandler { action ->
         when (action) {
-            // The page is taller than the screen and its focusable stops are
-            // far apart, so the triggers move it rather than the focus.
+            // Focusable stops are far apart here, so the triggers scroll.
             GamepadAction.PageUp -> {
                 scope.launch { scrollState.animateScrollBy(-scrollState.viewportSize * 0.85f) }
                 true
@@ -758,7 +705,7 @@ fun SettingsScreen(
                 scope.launch { scrollState.animateScrollBy(scrollState.viewportSize * 0.85f) }
                 true
             }
-            // Select opened this page; pressing it again closes it.
+            // Select opened this page; pressing it again closes.
             GamepadAction.Settings -> { onBack(); true }
             else                   -> false
         }
@@ -784,9 +731,8 @@ fun SettingsScreen(
             )
         },
     ) { padding ->
-        // A plain scrolling Column, not a LazyColumn: the page is a handful of
-        // items, and a lazy list is the container these fields cannot live in
-        // (see the focusSearch note in OutlinedInputField).
+        // Column, not LazyColumn: a lazy list is the one container these fields
+        // cannot live in, see the focusSearch note in OutlinedInputField.
         Column(
             Modifier
                 .fillMaxSize()
@@ -847,8 +793,7 @@ fun SettingsScreen(
                             style = MaterialTheme.typography.bodySmall,
                         )
                     }
-                    // Only while it is still true — the moment a field differs
-                    // from what is stored, there is something to save again.
+                    // Only while still true: a differing field means unsaved work.
                     ConnectionState.Saved -> if (!dirty) {
                         Spacer(Modifier.height(8.dp))
                         Text(
@@ -887,7 +832,7 @@ fun SettingsScreen(
                 Spacer(Modifier.height(8.dp))
 
                 Text(
-                    text  = "Verified before saving — if it fails, the current connection " +
+                    text  = "Verified before saving - if it fails, the current connection " +
                             "is kept. Downloads and folder mappings are unaffected.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -905,9 +850,8 @@ fun SettingsScreen(
             )
             HorizontalDivider()
 
-            // The lettering only ever shows up in the hint bar, and that bar
-            // draws only with a controller attached — so on a phone this whole
-            // section is a choice about something the user cannot see.
+            // The lettering only shows in the hint bar, which draws only with a
+            // controller: on a phone this section asks about the invisible.
             if (rememberHasGamepad()) {
                 Text(
                     text     = "Controller",
@@ -917,14 +861,11 @@ fun SettingsScreen(
                 )
 
                 Text(
-                    // Named by what the buttons do rather than by "Xbox" and
-                    // "Nintendo" alone: a handheld set to its own Xbox style is
-                    // often still silkscreened the Nintendo way, so the vendor's
-                    // word for the mode is the one thing that cannot be trusted
-                    // here.  What the user can always check is which button just
-                    // opened something.
+                    // Named by what the buttons do, not by "Xbox"/"Nintendo": a
+                    // handheld in its own Xbox mode is often silkscreened the
+                    // Nintendo way, so the vendor's word cannot be trusted.
                     text  = "Which letters the button hints print. Pick whichever matches " +
-                            "your handheld — this only changes the hints, never what the " +
+                            "your handheld - this only changes the hints, never what the " +
                             "buttons do.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -1035,14 +976,8 @@ fun SettingsScreen(
     }
 }
 
-/**
- * One of the two letterings, as a row a controller can walk onto.
- *
- * A row rather than a switch because there are two named things to choose
- * between and neither is the "off" one, and because the hint bar at the bottom
- * of this very screen repaints as the selection moves — which is the check the
- * user is here to make.
- */
+/** One of the two letterings, as a row a controller can walk onto. A row rather
+ *  than a switch because neither choice is the "off" one. */
 @Composable
 private fun GamepadLayoutChoice(
     headline: String,
@@ -1055,17 +990,14 @@ private fun GamepadLayoutChoice(
         headlineContent   = { Text(headline) },
         supportingContent = { Text(supporting) },
         leadingContent    = {
-            // Not clickable itself: the whole row is, and a focusable control
-            // inside a focusable row gives a controller two stops for one
-            // choice.
+            // Not clickable: the row is, and nesting gives a controller two
+            // stops for one choice.
             RadioButton(selected = selected, onClick = null)
         },
     )
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Folder Mapping
-// ─────────────────────────────────────────────────────────────────────────────
 
 /** One row of the folder-mapping list: a platform plus where its ROMs land. */
 data class PlatformFolderRow(
@@ -1087,11 +1019,8 @@ class FolderMappingViewModel @Inject constructor(
         targets.observeBaseFolder()
             .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
 
-    /**
-     * Every platform with its resolved destination. Combining the three sources
-     * here keeps the resolution rules in one place rather than duplicated
-     * between the download path and the settings UI.
-     */
+    /** Every platform with its resolved destination, so the download path and
+     *  the settings UI share one set of resolution rules. */
     val rows: StateFlow<List<PlatformFolderRow>> = combine(
         repo.observePlatforms(),
         targets.observeBaseFolder(),
@@ -1143,21 +1072,16 @@ class FolderMappingViewModel @Inject constructor(
 }
 
 /**
- * Derives a human-readable path string from a SAF tree URI.
- *
- * SAF tree URIs look like:
- *   content://com.android.externalstorage.documents/tree/primary%3ARoms%2FSNES
- *
- * The last path segment after decoding is something like "primary:Roms/SNES".
- * We strip the volume prefix and return just the path part, or the full URI
- * string as a fallback for non-standard providers (MTP, cloud, etc.).
+ * Human-readable path from a SAF tree URI. The decoded last segment looks like
+ * "primary:Roms/SNES"; the volume prefix is stripped. Non-standard providers
+ * (MTP, cloud) fall back to the full URI string.
  */
 fun safDisplayPath(uri: Uri): String {
     return try {
         val encoded = uri.lastPathSegment ?: return uri.toString()
         val decoded = java.net.URLDecoder.decode(encoded, "UTF-8")
-        // "primary:Roms/SNES" → "Roms/SNES"
-        // "0000-1111:Roms/SNES" → "Roms/SNES" (SD card)
+        // "primary:Roms/SNES" -> "Roms/SNES"
+        // "0000-1111:Roms/SNES" -> "Roms/SNES" (SD card)
         if (decoded.contains(':')) decoded.substringAfter(':') else decoded
     } catch (_: Exception) {
         uri.toString()
@@ -1174,8 +1098,7 @@ fun FolderMappingScreen(
     val rows       by viewModel.rows.collectAsState()
     val baseFolder by viewModel.baseFolder.collectAsState()
 
-    // Which platform an override picker result belongs to; -1 means the picker
-    // was launched for the base folder itself.
+    // Which platform a picker result belongs to; -1 is the base folder itself.
     val pendingPlatformId = remember { mutableIntStateOf(-1) }
     var editing by remember { mutableStateOf<PlatformFolderRow?>(null) }
 
@@ -1238,7 +1161,7 @@ fun FolderMappingScreen(
     ) { padding ->
         LazyColumn(state = listState, modifier = Modifier.fillMaxSize().padding(padding)) {
 
-            // ── Base folder ──────────────────────────────────────────────────
+            // Base folder
             item {
                 Card(
                     modifier = Modifier.fillMaxWidth().padding(16.dp),
@@ -1253,7 +1176,7 @@ fun FolderMappingScreen(
                         Spacer(Modifier.height(4.dp))
                         Text(
                             baseFolder?.displayPath
-                                ?: "Not set — choose the folder that holds your platform subfolders.",
+                                ?: "Not set - choose the folder that holds your platform subfolders.",
                             style = MaterialTheme.typography.bodyMedium,
                         )
                         Spacer(Modifier.height(4.dp))
@@ -1345,10 +1268,7 @@ fun FolderMappingScreen(
     }
 }
 
-/**
- * Per-platform override sheet: rename the subfolder (the common case for a
- * different naming scheme) or point the platform at an unrelated directory.
- */
+/** Rename the subfolder, or point the platform at an unrelated directory. */
 @Composable
 private fun PlatformFolderDialog(
     row: PlatformFolderRow,
@@ -1395,7 +1315,7 @@ private fun PlatformFolderDialog(
                 TextButton(onClick = onPickFolder, modifier = Modifier.fillMaxWidth()) {
                     Icon(Icons.Default.FolderOpen, contentDescription = null)
                     Spacer(Modifier.width(8.dp))
-                    Text("Use a different folder…")
+                    Text("Use a different folder...")
                 }
                 if (isCustomFolder || row.isRenamed) {
                     TextButton(onClick = onReset, modifier = Modifier.fillMaxWidth()) {

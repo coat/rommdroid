@@ -26,10 +26,9 @@ object DatabaseModule {
         Room.databaseBuilder(context, AppDatabase::class.java, "rommdroid.db")
             .addMigrations(*ALL_MIGRATIONS)
             .addCallback(KeepFolderMappings(folderMappingBackup))
-            // Only ever reached by a version this build has no migration for —
-            // a downgrade to an older APK, or a schema change that shipped
-            // without one. It drops the whole database; the callback above is
-            // what keeps that from costing the user their folder mappings.
+            // Reached only by a version with no migration: a downgrade, or a
+            // schema change that shipped without one. It drops everything; the
+            // callback above is what saves the folder mappings.
             .fallbackToDestructiveMigration()
             .build()
 
@@ -43,21 +42,17 @@ object DatabaseModule {
 }
 
 /**
- * Keeps the folder mappings across a database rebuild.
+ * Keeps the folder mappings across a database rebuild: an ordinary open seeds
+ * the mirror, the open after a rebuild restores from it.
  *
- * On an ordinary open this takes the first mirror of whatever the user has
- * already configured; on the open that follows a rebuild it puts that mirror
- * back.  Both wait for [onOpen] rather than acting where they hear the news:
- * Room's generated `dropAllTables` calls [onDestructiveMigration] between the
- * DROP and the CREATE, when there is no `base_folder` to read or write.  By
- * [onOpen] the tables exist, and this still runs ahead of the first query, so
- * nothing ever observes the gap.
+ * Both wait for [onOpen] rather than acting where they hear the news, because
+ * `dropAllTables` calls [onDestructiveMigration] between the DROP and the
+ * CREATE, when there is no `base_folder` to read or write. [onOpen] still runs
+ * ahead of the first query.
  *
- * [onCreate] counts as a rebuild for the same reason [onDestructiveMigration]
- * does: a database file that went missing on its own is indistinguishable from
- * one Room dropped, and the mirror is the only copy of the mappings either way.
- * On a genuinely first-run install the mirror is empty and the restore is a
- * no-op.
+ * [onCreate] counts as a rebuild too: a database file that went missing on its
+ * own is indistinguishable from one Room dropped. On a true first run the mirror
+ * is empty and the restore is a no-op.
  */
 private class KeepFolderMappings(
     private val backup: FolderMappingBackup,

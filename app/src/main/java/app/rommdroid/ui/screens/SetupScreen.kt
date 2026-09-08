@@ -22,7 +22,7 @@ import app.rommdroid.ui.components.focusOutline
 import app.rommdroid.ui.components.rememberInputFieldHandle
 import javax.inject.Inject
 
-// ── ViewModel ─────────────────────────────────────────────────────────────────
+// ViewModel
 
 sealed interface SetupState {
     data object Idle : SetupState
@@ -50,7 +50,7 @@ class SetupViewModel @Inject constructor(
     }
 }
 
-// ── Screen ────────────────────────────────────────────────────────────────────
+// Screen
 
 @Composable
 fun SetupScreen(
@@ -63,9 +63,8 @@ fun SetupScreen(
     var username  by remember { mutableStateOf("") }
     var password  by remember { mutableStateOf("") }
 
-    // "Next" on the keyboard walks down the form.  Android's focus search does
-    // not cross the Compose/View boundary between these fields, so hand each one
-    // the next field explicitly.
+    // Android's focus search does not cross the Compose/View boundary, so each
+    // field is handed the next one explicitly for the keyboard's "Next".
     val usernameField = rememberInputFieldHandle()
     val passwordField = rememberInputFieldHandle()
 

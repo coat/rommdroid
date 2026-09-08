@@ -3,20 +3,14 @@ package app.rommdroid.data.db
 import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
 
-/**
- * A way forward from every version of this database that has ever been on a
- * phone.
+/*
+ * A way forward from every version of this database that has shipped. The folder
+ * mappings live in here and are the one thing the app cannot re-fetch, so each
+ * schema change gets a real migration; the destructive fallback in
+ * [app.rommdroid.di.DatabaseModule] is the net, not the plan.
  *
- * The folder mappings live in here and they are the one thing the app cannot
- * re-fetch: dropping them costs the user their SAF grants and a walk back
- * through the document picker for the base folder and every platform they had
- * pointed elsewhere.  So each schema change gets a real migration rather than
- * leaning on the destructive fallback in
- * [app.rommdroid.di.DatabaseModule] — that fallback is the net, not the plan.
- *
- * A migration's end state has to match what `AppDatabase_Impl.createAllTables`
- * would have produced, or Room rejects it at the next open; the DDL here is
- * copied from there verbatim for that reason.
+ * The DDL is copied verbatim from `AppDatabase_Impl.createAllTables`, since Room
+ * rejects any end state that does not match it.
  */
 
 /** Adds the base folder and the per-platform subfolder names. */
@@ -36,15 +30,12 @@ val MIGRATION_1_2 = object : Migration(1, 2) {
 }
 
 /**
- * Adds the key that folds regional copies of one game into a single row.
+ * Adds the key that folds regional copies into one row.
  *
- * Existing rows are backfilled rather than left at the column default: an empty
- * key is a key like any other to `WHERE groupKey = ?`, so every cached ROM would
- * come back as a variant of every other one.  The backfill can only reach the
- * lower two tiers of [app.rommdroid.util.romGroupKey] — the metadata id it
- * prefers is not a column — so a synced platform regroups slightly when the next
- * sync recomputes the keys in full.  Wrong grouping for a while beats a variant
- * picker listing the entire library.
+ * Backfilled rather than left at the default: an empty key matches every other
+ * empty key, so every cached ROM would be a variant of every other. The backfill
+ * reaches only the lower two tiers of [app.rommdroid.util.romGroupKey], since
+ * the metadata id is not a column, so grouping shifts slightly on the next sync.
  */
 val MIGRATION_2_3 = object : Migration(2, 3) {
     override fun migrate(db: SupportSQLiteDatabase) {
@@ -93,28 +84,16 @@ val MIGRATION_3_4 = object : Migration(3, 4) {
     }
 }
 
-/**
- * Adds the aggregate rating a ROM list row shows.
- *
- * Left null for every existing row rather than backfilled: the value only
- * exists on the server, and opening a platform full-syncs it anyway (see
- * [app.rommdroid.ui.screens.RomListViewModel]), so the column fills itself in
- * the first time the user visits each list.
- */
+/** Adds the aggregate rating. Left null rather than backfilled: the value only
+ *  exists on the server, and opening a platform full-syncs it anyway. */
 val MIGRATION_4_5 = object : Migration(4, 5) {
     override fun migrate(db: SupportSQLiteDatabase) {
         db.execSQL("ALTER TABLE `roms` ADD COLUMN `averageRating` REAL")
     }
 }
 
-/**
- * Adds the collections cache and the ROMs that belong to each.
- *
- * Both tables start empty and fill themselves on the next sync: the platform
- * list syncs collections alongside platforms, and a collection's membership is
- * fetched the first time it is opened.  There is nothing to backfill — none of
- * this existed locally before.
- */
+/** Adds the collections cache and its membership. Nothing to backfill; both
+ *  tables fill themselves on the next sync. */
 val MIGRATION_5_6 = object : Migration(5, 6) {
     override fun migrate(db: SupportSQLiteDatabase) {
         db.execSQL(

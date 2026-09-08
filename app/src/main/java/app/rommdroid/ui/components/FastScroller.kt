@@ -42,12 +42,9 @@ import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
 
 /*
- * The thumb you drag to cross a list of thousands in one gesture, with the
- * letter you are passing over shown next to it.
- *
- * Compose ships no fast scroller — LazyColumn has no scrollbar at all — so this
- * is the Android idiom rebuilt: a thumb that appears when the list moves, and a
- * bubble that names where a drag has got to.
+ * The Android fast scroller, rebuilt: LazyColumn has no scrollbar at all. A
+ * thumb that appears when the list moves, and a bubble naming the letter a drag
+ * is passing over.
  */
 
 private val TrackWidth  = 40.dp
@@ -56,21 +53,14 @@ private val ThumbBar    = 6.dp
 private val BubbleSize  = 64.dp
 private val BubbleGap   = 8.dp
 
-/**
- * The overlay is wide enough to hold the bubble beside the track, so nothing it
- * draws has to reach outside its own bounds.  It takes no pointer input except
- * on the thumb itself, so the extra width costs the list nothing.
- */
+/** Wide enough for the bubble beside the track, so nothing draws outside its
+ *  bounds. Only the thumb takes pointer input, so the width costs nothing. */
 private val OverlayWidth = TrackWidth + BubbleGap + BubbleSize
 
 /**
- * A draggable thumb over [state], labelled from [index].
- *
- * Position is measured in items rather than pixels: rows here are not a uniform
- * height — a two-line title is twice a one-line one — and Compose only knows
- * the height of the rows currently on screen, so there is no pixel total to
- * take a fraction of.  Counting items is exact at both ends and close enough in
- * between, which is all a thumb needs to be.
+ * A draggable thumb over [state], labelled from [index]. Position is in items,
+ * not pixels: rows vary in height and Compose knows only the on-screen ones, so
+ * there is no pixel total to take a fraction of.
  */
 @Composable
 fun FastScroller(
@@ -88,8 +78,7 @@ fun FastScroller(
     var dragOffsetPx  by remember { mutableFloatStateOf(0f) }
 
     val firstVisible by remember { derivedStateOf { state.firstVisibleItemIndex } }
-    // How far the first visible item can travel: the last index that can still
-    // fill the screen, not the item count.
+    // The last index that can still fill the screen, not the item count.
     val span by remember {
         derivedStateOf {
             val info = state.layoutInfo
@@ -102,17 +91,14 @@ fun FastScroller(
     val restingPx = (firstVisible.toFloat() / span).coerceIn(0f, 1f) * travelPx
     val thumbPx   = if (dragging) dragOffsetPx else restingPx
 
-    // The gesture handler outlives the composition that set it up, so everything
-    // it reads has to come through a holder rather than being captured.  Keying
-    // the pointerInput on these instead would restart the detector every time
-    // one changed — and `span` changes the moment a header scrolls in or out,
-    // which is to say a few rows into the very drag being handled.
+    // The gesture handler outlives its composition, so it reads through holders
+    // rather than captures. Keying pointerInput on these would restart the
+    // detector whenever `span` changed, which is a few rows into every drag.
     val currentResting by rememberUpdatedState(restingPx)
     val currentTravel  by rememberUpdatedState(travelPx)
     val currentSpan    by rememberUpdatedState(span)
 
-    // Shows itself when the list moves and gets out of the way when it stops,
-    // the same manners as the platform's own scrollbars.
+    // Same manners as the platform's own scrollbars.
     var shown by remember { mutableStateOf(false) }
     LaunchedEffect(state.isScrollInProgress, dragging) {
         if (state.isScrollInProgress || dragging) {
@@ -130,8 +116,8 @@ fun FastScroller(
             .width(OverlayWidth)
             .onSizeChanged { trackHeightPx = it.height }
     ) {
-        // Faded out entirely means gone, not merely invisible: an untouchable
-        // 40dp strip down the edge of the list would still swallow flicks.
+        // Gone, not merely invisible: an untouchable 40dp strip down the edge
+        // would still swallow flicks.
         if (alpha <= 0.01f) return@Box
 
         Box(
@@ -140,9 +126,8 @@ fun FastScroller(
                 .offset { IntOffset(0, thumbPx.roundToInt()) }
                 .size(width = TrackWidth, height = ThumbHeight)
                 .alpha(alpha)
-                // The right edge of the screen belongs to the system's back
-                // gesture, which swallows a grab aimed at the outer half of the
-                // thumb.  Claim this rectangle back.
+                // The system back gesture owns the right edge and swallows a
+                // grab at the outer half of the thumb; claim it back.
                 .systemGestureExclusion()
                 .pointerInput(Unit) {
                     detectVerticalDragGestures(
@@ -171,8 +156,7 @@ fun FastScroller(
             )
         }
 
-        // Only while dragging: the letter is the answer to "where am I now",
-        // which is a question only a drag asks.
+        // Only a drag asks "where am I now".
         val label = if (dragging) index.labelAt(firstVisible) else null
         if (label != null) {
             Surface(
@@ -180,8 +164,7 @@ fun FastScroller(
                 shape           = CircleShape,
                 shadowElevation = 3.dp,
                 modifier = Modifier
-                    // Left of the track, so the finger on the thumb is not
-                    // covering the letter it is there to read.
+                    // Left of the track, clear of the finger on the thumb.
                     .align(Alignment.TopStart)
                     .offset {
                         IntOffset(

@@ -8,14 +8,8 @@ import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
 import javax.inject.Singleton
 
-/**
- * Stores and retrieves credentials from Android Keystore-backed
- * EncryptedSharedPreferences.
- *
- * All writes are synchronous (tiny values).  Callers that need to react to
- * changes should observe [app.rommdroid.data.repository.ServerConfigRepository]
- * which exposes a Flow from DataStore.
- */
+/** Credentials in Keystore-backed EncryptedSharedPreferences. Writes are
+ *  synchronous; the values are tiny. */
 @Singleton
 class CredentialRepository @Inject constructor(
     @ApplicationContext context: Context,
@@ -39,7 +33,7 @@ class CredentialRepository @Inject constructor(
         private const val KEY_PASSWORD   = "password"   // only kept during token setup
     }
 
-    // ── Server URL ────────────────────────────────────────────────────────────
+    // Server URL
 
     var serverUrl: String?
         get() = prefs.getString(KEY_SERVER_URL, null)
@@ -48,7 +42,7 @@ class CredentialRepository @Inject constructor(
             else prefs.edit().putString(KEY_SERVER_URL, value).apply()
         }
 
-    // ── Client API Token (preferred) ──────────────────────────────────────────
+    // Client API token, preferred over Basic auth
 
     var apiToken: String?
         get() = prefs.getString(KEY_API_TOKEN, null)
@@ -57,7 +51,7 @@ class CredentialRepository @Inject constructor(
             else prefs.edit().putString(KEY_API_TOKEN, value).apply()
         }
 
-    // ── Basic Auth fallback (used only during initial token exchange) ─────────
+    // Basic auth, used only for the initial token exchange
 
     var username: String?
         get() = prefs.getString(KEY_USERNAME, null)
@@ -78,7 +72,7 @@ class CredentialRepository @Inject constructor(
         password = pass
     }
 
-    /** Returns "Basic <base64>" header value, or null if not set. */
+    /** The "Basic <base64>" header value, or null when unset. */
     val basicAuthHeader: String?
         get() {
             val u = username ?: return null
@@ -87,14 +81,14 @@ class CredentialRepository @Inject constructor(
             return "Basic $encoded"
         }
 
-    /** Clears password after a successful token exchange — don't persist it. */
+    /** Called once the token exchange succeeds; the password is not persisted. */
     fun clearPassword() {
         prefs.edit().remove(KEY_PASSWORD).apply()
     }
 
-    // ── Snapshot / restore ────────────────────────────────────────────────────
+    // Snapshot / restore
 
-    /** Everything this repository stores, as one value. See [snapshot]. */
+    /** Everything stored here, as one value. */
     data class Snapshot(
         val serverUrl: String?,
         val apiToken: String?,
@@ -102,12 +96,8 @@ class CredentialRepository @Inject constructor(
         val password: String?,
     )
 
-    /**
-     * Takes a copy of the stored credentials so a failed re-connect can put them
-     * back.  Signing in writes as it goes — URL first, so the interceptors point
-     * at the new server for the verification requests — and a wrong password or
-     * an unreachable host must not cost the user the connection they had.
-     */
+    /** A copy a failed re-connect can put back. Signing in writes as it goes,
+     *  URL first, so the interceptors reach the server being verified. */
     fun snapshot(): Snapshot = Snapshot(serverUrl, apiToken, username, password)
 
     fun restore(snapshot: Snapshot) {
@@ -117,11 +107,8 @@ class CredentialRepository @Inject constructor(
         password  = snapshot.password
     }
 
-    /**
-     * Wipes all stored credentials.
-     * Used by "Disconnect / Change server" in Settings.
-     * Downloaded files and folder mappings are unaffected.
-     */
+    /** Wipes every stored credential, for "Disconnect / Change server".
+     *  Downloaded files and folder mappings are unaffected. */
     fun clearAll() {
         prefs.edit()
             .remove(KEY_SERVER_URL)
@@ -131,7 +118,7 @@ class CredentialRepository @Inject constructor(
             .apply()
     }
 
-    /** Returns true if enough credentials are stored to make API calls. */
+    /** True once there is enough stored to make API calls. */
     val isConfigured: Boolean
         get() = !serverUrl.isNullOrBlank() && (apiToken != null || basicAuthHeader != null)
 }

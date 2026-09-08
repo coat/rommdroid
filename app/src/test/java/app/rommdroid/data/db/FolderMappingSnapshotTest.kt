@@ -9,7 +9,7 @@ import org.junit.Test
 /**
  * The snapshot is the only copy of the folder mappings that survives a database
  * rebuild, so what matters is that it still decodes when the app around it has
- * moved on — an older file read by a newer build, or the other way round.
+ * moved on - an older file read by a newer build, or the other way round.
  */
 class FolderMappingSnapshotTest {
 

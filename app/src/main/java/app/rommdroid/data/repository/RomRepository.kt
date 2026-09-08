@@ -25,30 +25,18 @@ class RomRepository @Inject constructor(
     private val json: Json,
 ) {
 
-    // ── Platforms ─────────────────────────────────────────────────────────────
+    // Platforms
 
     fun observePlatforms(): Flow<List<PlatformEntity>> = platformDao.observeAll()
 
     /**
-     * Refresh the cached platform list.
+     * Refresh the cached platform list. A full sync ([updatedAfter] null) also
+     * prunes platforms the server no longer has, along with their ROMs.
      *
-     * A full sync ([updatedAfter] null) also drops platforms the server no
-     * longer has, along with their ROMs: an upsert-only sync leaves a deleted
-     * platform in the list for good, since the user has no reason to open it
-     * and nothing else ever prunes it.
-     *
-     * Two responses are deliberately *not* treated as deletions:
-     *  - an incremental one, which carries only what changed and so says
-     *    nothing about what is gone, and
-     *  - an empty full listing, which is indistinguishable from a server that
-     *    answered a misrouted or over-filtered request with `[]`.  Wrongly
-     *    keeping a stale row until the next sync is cheap; wrongly wiping the
-     *    whole list is not.  A library that really is empty can be cleared from
-     *    Settings.
-     *
-     * Folder mappings survive either way.  A platform can drop out of a
-     * response for reasons other than deletion, and a hand-picked SAF folder is
-     * the one thing here that a re-sync cannot rebuild.
+     * Neither an incremental response (says nothing about what is gone) nor an
+     * empty full listing (indistinguishable from a misrouted request answered
+     * with `[]`) counts as a deletion. Folder mappings survive either way; a
+     * hand-picked SAF folder is the one thing a re-sync cannot rebuild.
      */
     suspend fun syncPlatforms(updatedAfter: String? = null) {
         val remote = api.getPlatforms(updatedAfter = updatedAfter).map { it.toEntity() }
@@ -60,14 +48,10 @@ class RomRepository @Inject constructor(
     }
 
     /**
-     * Drops the whole cached library — every platform and ROM row.
-     *
-     * Needed when the app is pointed at a different server: RomM ids are
-     * per-server, so leaving the previous server's rows in place renders its
-     * cached metadata under the new server's platforms.
-     *
-     * Downloaded files, folder mappings and the download queue are untouched;
-     * they are the user's own and no sync can recreate them.
+     * Drop the whole cached library. Needed when the app is pointed at a
+     * different server: RomM ids are per-server, so stale rows would render the
+     * old server's metadata under the new server's platforms. Downloaded files,
+     * folder mappings and the queue are untouched.
      */
     suspend fun clearLibraryCache() {
         platformDao.deleteAll()
@@ -75,23 +59,18 @@ class RomRepository @Inject constructor(
         collectionDao.deleteAll()
     }
 
-    // ── ROMs ──────────────────────────────────────────────────────────────────
+    // ROMs
 
     fun observeRoms(platformId: Int): Flow<List<RomEntity>> =
         romDao.observeByPlatform(platformId)
 
     /**
-     * Fetch ROMs for [platformId] from the server, storing all pages into Room.
+     * Fetch every page of [platformId]'s ROMs, then write. A full refresh
+     * ([updatedAfter] null) replaces the platform's rows.
      *
-     * Uses [updatedAfter] for incremental sync.  A full refresh (null) replaces
-     * the platform's rows so ROMs deleted on the server stop being listed.
-     *
-     * Every page is collected before anything is written.  Deleting up front
-     * instead would mean a refresh out of range of the server — which is where
-     * a handheld usually is — emptying the cache it was meant to update, and a
-     * connection dropped halfway through the pages leaving a part of a library
-     * looking like all of it.  Holding the pages costs peak memory on the order
-     * of the platform's size, which even an arcade set keeps to megabytes.
+     * Collecting all pages first costs peak memory on the order of the
+     * platform's size, and buys not emptying the cache when a handheld goes out
+     * of range mid-sync.
      */
     suspend fun syncRoms(platformId: Int, updatedAfter: String? = null) {
         val fetched = mutableListOf<RomEntity>()
@@ -126,12 +105,9 @@ class RomRepository @Inject constructor(
     }
 
     /**
-     * Search the whole library on the server.
-     *
-     * Deliberately not a Room query: the cache only ever holds the platforms the
-     * user has actually opened, so a local search silently returns a fraction of
-     * what the web UI finds for the same term.  Callers should fall back to
-     * [searchLocal] when this throws so search still works offline.
+     * Search the whole library on the server. Not a Room query: the cache holds
+     * only the platforms the user has opened, so a local search silently returns
+     * a fraction of the hits. Callers fall back to [searchLocal] when this throws.
      */
     suspend fun searchRemote(query: String, limit: Int = 100): List<RomEntity> =
         api.getRoms(
@@ -142,10 +118,10 @@ class RomRepository @Inject constructor(
             withFilterValues = false,
         ).items.map { it.toEntity() }
 
-    /** Offline fallback — only covers platforms that have been synced. */
+    /** Offline fallback - only covers platforms that have been synced. */
     suspend fun searchLocal(query: String): List<RomEntity> = romDao.search(query)
 
-    // ── Collections ───────────────────────────────────────────────────────────
+    // Collections
 
     fun observeCollections(): Flow<List<CollectionEntity>> = collectionDao.observeAll()
 
@@ -158,13 +134,9 @@ class RomRepository @Inject constructor(
     suspend fun getCollection(id: Int): CollectionEntity? = collectionDao.getById(id)
 
     /**
-     * Refresh the cached collections.
-     *
-     * Always a full listing — a user has a handful of collections, not the
-     * thousands of ROMs that make an incremental platform sync worth it — and
-     * so it prunes what the server no longer has, with the same guard
-     * [syncPlatforms] documents: an empty response is treated as a server that
-     * answered oddly, not as a library with nothing in it.
+     * Refresh the cached collections. Always a full listing, since a user has a
+     * handful of them, so it prunes; empty responses are guarded as in
+     * [syncPlatforms].
      */
     suspend fun syncCollections() {
         val remote = api.getCollections().map { it.toEntity() }
@@ -176,14 +148,9 @@ class RomRepository @Inject constructor(
     }
 
     /**
-     * Fetch what is in one collection, paging exactly as [syncRoms] does and
-     * for the same reasons — every page collected before anything is written.
-     *
-     * The ROM rows are upserted rather than swapped: they belong to their
-     * platforms, not to this collection, and a platform's own sync is what
-     * owns the question of which of its ROMs still exist.  Only the membership
-     * is replaced, so a game taken out of the collection on the server leaves
-     * the list here too.
+     * Fetch one collection's ROMs, paging as [syncRoms] does. The ROM rows are
+     * upserted rather than swapped, since they belong to their platforms; only
+     * the membership is replaced.
      */
     suspend fun syncCollectionRoms(collectionId: Int) {
         val fetched = mutableListOf<RomEntity>()
@@ -209,14 +176,10 @@ class RomRepository @Inject constructor(
         )
     }
 
-    // ── Regional variants ─────────────────────────────────────────────────────
+    // Regional variants
 
-    /**
-     * Every cached copy of the same game as [rom], newest sync wins.
-     *
-     * Returns just [rom] when nothing else is cached — which is the normal case
-     * for a ROM reached from search, since search results are not persisted.
-     */
+    /** Every cached copy of the same game as [rom], or just [rom] when nothing
+     *  else is cached - the normal case for a ROM reached from search. */
     suspend fun cachedVariants(rom: RomEntity): List<RomEntity> =
         romDao.getByGroupKey(rom.groupKey).ifEmpty { listOf(rom) }
 
@@ -230,14 +193,12 @@ class RomRepository @Inject constructor(
     fun regionsOf(rom: RomEntity): List<String> =
         romRegions(rom) { json.decodeFromString(it) }
 
-    // ── Download URL construction ─────────────────────────────────────────────
+    // Download URL construction
 
     /**
-     * Returns the download URL for [fileName] belonging to ROM [romId].
-     * Optionally filter to specific [fileIds] (for multi-disc ROMs).
-     *
-     * This URL is passed to [app.rommdroid.data.download.DownloadWorker] with
-     * the auth token as a header — it is NOT called via Retrofit.
+     * Download URL for [fileName] of ROM [romId], optionally narrowed to
+     * [fileIds] for a multi-disc set. Handed to
+     * [app.rommdroid.data.download.DownloadWorker], not called via Retrofit.
      */
     fun romDownloadUrl(
         serverUrl: String,
@@ -245,9 +206,8 @@ class RomRepository @Inject constructor(
         fileName: String,
         fileIds: List<Int> = emptyList(),
     ): String {
-        // Built through HttpUrl so ROM names survive the trip: spaces, "&",
-        // "#" and "?" are common in filenames and a raw string concat produces
-        // a URL that silently points at the wrong resource.
+        // HttpUrl, not string concat: spaces, "&", "#" and "?" are common in ROM
+        // filenames and a raw concat silently points at the wrong resource.
         val builder = serverUrl.trimEnd('/').toHttpUrl().newBuilder()
             .addPathSegments("api/roms/$romId/content")
             .addPathSegment(fileName)
@@ -257,7 +217,7 @@ class RomRepository @Inject constructor(
         return builder.build().toString()
     }
 
-    // ── Mappers ───────────────────────────────────────────────────────────────
+    // Mappers
 
     private fun PlatformSchema.toEntity() = PlatformEntity(
         id          = id,
@@ -271,13 +231,10 @@ class RomRepository @Inject constructor(
 
     private fun CollectionSchema.toEntity() = CollectionEntity(
         id             = id,
-        // Scraped and hand-typed copy alike arrives HTML-escaped, same as a
-        // ROM's name does.
         name           = name.decodeHtmlEntities(),
         description    = description.decodeHtmlEntities(),
         romCount       = romCount,
-        // The member covers stand in for a collection that has none of its
-        // own, which is every collection nobody uploaded artwork for.
+        // Member covers stand in for the collections nobody uploaded art for.
         pathCoverSmall = pathCoverSmall ?: pathCoversSmall.firstOrNull(),
         pathCoverLarge = pathCoverLarge ?: pathCoversLarge.firstOrNull(),
         urlCover       = urlCover?.takeIf { it.isNotBlank() },
@@ -296,8 +253,8 @@ class RomRepository @Inject constructor(
         fsNameNoTags          = fsNameNoTags,
         fsExtension           = fsExtension,
         fsSizeBytes           = fsSizeBytes,
-        // Scraped copy arrives HTML-escaped; filesystem fields never get this
-        // treatment — a literal "&amp;" there is part of the real filename.
+        // Scraped copy arrives HTML-escaped; the fs* fields never do, where a
+        // literal "&amp;" is part of the real filename.
         name                  = name?.decodeHtmlEntities(),
         slug                  = slug,
         summary               = summary?.decodeHtmlEntities(),

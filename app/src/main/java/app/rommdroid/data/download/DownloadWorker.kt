@@ -26,13 +26,8 @@ import java.io.IOException
 import java.util.concurrent.TimeUnit
 
 /**
- * Downloads a single ROM file to the SAF folder configured for its platform.
- *
- * Progress is reported as WorkManager [Progress] and as an ongoing notification.
- * The worker is resumable by WorkManager (enqueue with [ExistingWorkPolicy.KEEP]).
- *
- * Input data keys: [KEY_URL], [KEY_FILE_NAME], [KEY_DESTINATION_URI],
- *                  [KEY_ROM_ID], [KEY_EXPECTED_BYTES], [KEY_QUEUE_ID]
+ * Downloads one ROM file into the SAF folder configured for its platform,
+ * reporting progress as WorkManager [Progress] and an ongoing notification.
  */
 @HiltWorker
 class DownloadWorker @AssistedInject constructor(
@@ -81,13 +76,13 @@ class DownloadWorker @AssistedInject constructor(
             .build()
     }
 
-    // OkHttpClient without read timeout for streaming large files
+    // No read timeout: these streams run to gigabytes.
     private val downloadClient = OkHttpClient.Builder()
         .connectTimeout(15, TimeUnit.SECONDS)
         .readTimeout(0, TimeUnit.SECONDS)
         .build()
 
-    /** The downloads-table row this work belongs to, when it was queued through it. */
+    /** The downloads-table row this work belongs to, if it came through one. */
     private val queueId: String? get() = inputData.getString(KEY_QUEUE_ID)
 
     override suspend fun doWork(): Result {
@@ -104,34 +99,30 @@ class DownloadWorker @AssistedInject constructor(
         setStatus(DownloadStatus.RUNNING, null)
 
         return try {
-            // Copying a multi-gigabyte stream is blocking work; on the worker's
-            // default dispatcher it would occupy a CPU thread the ROM list needs
-            // for folding its variants, stalling the list while a download runs.
+            // Blocking work: on the worker's default dispatcher it would take a
+            // CPU thread the ROM list needs for folding, stalling the list.
             withContext(Dispatchers.IO) {
                 download(url, fileName, destUriString, subfolder, expectedBytes)
             }
             Log.i(TAG, "Finished download of $fileName")
             setStatus(DownloadStatus.SUCCEEDED, null)
-            // The folder now holds a file it did not before, so any cached
-            // listing showing this ROM as missing is stale.
+            // The folder gained a file, so any cached listing is stale.
             localRoms.invalidate()
             Result.success()
         } catch (e: CancellationException) {
-            // The user cancelled from the queue screen; the row is already
-            // marked there, and this scope is dead, so just get out.
+            // Cancelled from the queue screen, which already marked the row.
             throw e
         } catch (e: IOException) {
             Log.e(TAG, "Download of $fileName failed (attempt $runAttemptCount)", e)
             if (runAttemptCount < 3) {
-                setStatus(DownloadStatus.QUEUED, "Retrying — ${e.message}")
+                setStatus(DownloadStatus.QUEUED, "Retrying - ${e.message}")
                 Result.retry()
             } else {
                 fail(e.message ?: "Download failed")
             }
         } catch (e: Exception) {
             // SecurityException (revoked SAF grant), IllegalStateException
-            // (foreground service refused), IllegalArgumentException (bad URL)…
-            // Without this the worker died with no trace and no user feedback.
+            // (foreground service refused), IllegalArgumentException (bad URL).
             Log.e(TAG, "Download of $fileName failed unrecoverably", e)
             fail("${e.javaClass.simpleName}: ${e.message}")
         }
@@ -143,13 +134,9 @@ class DownloadWorker @AssistedInject constructor(
         return Result.failure(workDataOf(KEY_ERROR to message))
     }
 
-    /**
-     * Record progress in the queue table.
-     *
-     * Uncancellable on purpose: the interesting write is the one that happens
-     * as the job ends, and a cancelled scope would otherwise drop it and leave
-     * the row stuck on "Downloading" forever.
-     */
+    /** Record progress in the queue table. Uncancellable, because the write that
+     *  matters happens as the job ends and would otherwise be dropped, leaving
+     *  the row stuck on "Downloading". */
     private suspend fun setStatus(status: DownloadStatus, error: String?) {
         val id = queueId ?: return
         try {
@@ -168,12 +155,11 @@ class DownloadWorker @AssistedInject constructor(
         subfolder: String?,
         expectedBytes: Long,
     ) {
-        // Prefer the client API token; fall back to Basic auth, which is all
-        // that is stored when token creation was refused during setup. Sending
-        // no credentials at all just yields a 403 from RomM.
+        // Basic auth is the fallback for a setup where token creation was
+        // refused; no credentials at all is a 403.
         val authHeader = credentials.apiToken?.let { "Bearer $it" }
             ?: credentials.basicAuthHeader
-        if (authHeader == null) Log.w(TAG, "No credentials stored — request will be unauthenticated")
+        if (authHeader == null) Log.w(TAG, "No credentials stored - request will be unauthenticated")
 
         val request = Request.Builder()
             .url(url)
@@ -186,27 +172,24 @@ class DownloadWorker @AssistedInject constructor(
             val body = response.body ?: throw IOException("Empty response body")
             val total = if (expectedBytes > 0) expectedBytes else body.contentLength()
 
-            // Resolve the destination SAF folder and create/overwrite the file
             val treeUri = destUriString.toUri()
             val root = DocumentFile.fromTreeUri(applicationContext, treeUri)
                 ?: throw IOException("Cannot open destination folder")
             if (!root.canWrite()) {
-                throw IOException("No write permission for destination folder — re-select it in Settings → Folder Mapping")
+                throw IOException("No write permission for destination folder - re-select it in Settings -> Folder Mapping")
             }
 
-            // A subfolder means the grant is on the base ROMs directory, so the
-            // per-platform directory is ours to create on first download.
+            // A subfolder means the grant is on the base directory, so the
+            // per-platform one is ours to create.
             val dir = if (subfolder.isNullOrBlank()) root else resolveSubfolder(root, subfolder)
 
-            // Delete existing file if present (resumable would be nicer, but
-            // SAF doesn't support partial writes; simplicity wins here)
+            // No resume: SAF has no partial writes.
             dir.findFile(fileName)?.delete()
             val destFile = dir.createFile("application/octet-stream", fileName)
                 ?: throw IOException("Cannot create $fileName in destination")
 
-            // A half-written ROM left in the library folder is worse than no
-            // ROM at all — the emulator finds it and fails obscurely — so an
-            // interrupted transfer takes its file with it.
+            // A half-written ROM is worse than none: the emulator finds it and
+            // fails obscurely. An interrupted transfer takes its file with it.
             try {
                 applicationContext.contentResolver.openOutputStream(destFile.uri)?.use { out ->
                     val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
@@ -219,7 +202,7 @@ class DownloadWorker @AssistedInject constructor(
                             out.write(buffer, 0, bytesRead)
                             downloaded += bytesRead
 
-                            // Update progress ~every 500 KB to avoid hammering WorkManager
+                            // ~every 500 KB, so WorkManager is not hammered.
                             if (downloaded - lastNotified > 512 * 1024) {
                                 lastNotified = downloaded
                                 setProgress(workDataOf(PROGRESS_BYTES to downloaded, PROGRESS_TOTAL to total))
@@ -238,13 +221,8 @@ class DownloadWorker @AssistedInject constructor(
         }
     }
 
-    /**
-     * Finds or creates [name] directly under [parent].
-     *
-     * An existing entry that is a file rather than a directory would otherwise
-     * make createDirectory() silently produce a second entry with the same name,
-     * so that case is reported instead.
-     */
+    /** Finds or creates [name] under [parent]. An existing file of that name is
+     *  reported, since createDirectory() would silently make a duplicate. */
     private fun resolveSubfolder(parent: DocumentFile, name: String): DocumentFile {
         val existing = parent.findFile(name)
         if (existing != null) {
@@ -257,12 +235,9 @@ class DownloadWorker @AssistedInject constructor(
     }
 
     /**
-     * Promote to a foreground service so the OS doesn't kill a long download.
-     *
-     * This is best-effort: the platform refuses to start a foreground service
-     * while the app is backgrounded on Android 12+, and the notification is
-     * silently dropped when POST_NOTIFICATIONS is denied on Android 13+. Neither
-     * is a reason to abandon the transfer, so failures here are logged, not thrown.
+     * Promote to a foreground service so the OS does not kill a long download.
+     * Best-effort: Android 12+ refuses one from the background and 13+ drops the
+     * notification without POST_NOTIFICATIONS. Neither aborts the transfer.
      */
     private suspend fun notifyProgress(fileName: String, downloaded: Long, total: Long) {
         try {
@@ -287,8 +262,7 @@ class DownloadWorker @AssistedInject constructor(
             .setSilent(true)
             .build()
 
-        // Android 10+ requires the service type to be passed through, and on
-        // Android 14+ omitting it throws MissingForegroundServiceTypeException.
+        // Android 14+ throws MissingForegroundServiceTypeException without this.
         return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             ForegroundInfo(id.hashCode(), notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
         } else {
