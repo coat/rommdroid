@@ -129,6 +129,16 @@ val MIGRATION_5_6 = object : Migration(5, 6) {
     }
 }
 
+/** Adds the two dates the ROM list can sort on. Left null for the same reason
+ *  as the rating: opening a platform full-syncs it. */
+val MIGRATION_6_7 = object : Migration(6, 7) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL("ALTER TABLE `roms` ADD COLUMN `firstReleaseDate` INTEGER")
+        db.execSQL("ALTER TABLE `roms` ADD COLUMN `createdAt` TEXT")
+    }
+}
+
 /** Every migration, in the order the versions shipped. */
-val ALL_MIGRATIONS =
-    arrayOf(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6)
+val ALL_MIGRATIONS = arrayOf(
+    MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7,
+)

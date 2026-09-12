@@ -41,6 +41,13 @@ data class RomGroup(
     /** A rating belongs to the game, not a copy, so an unidentified primary
      *  borrows the score from an identified sibling. */
     val rating: Double? get() = variants.firstNotNullOfOrNull { it.averageRating }
+
+    /** Same again for the release date. */
+    val firstReleaseDate: Long? get() = variants.firstNotNullOfOrNull { it.firstReleaseDate }
+
+    /** When the game arrived: the earliest copy, so a re-dump of an old title
+     *  does not make it "new". */
+    val createdAt: String? get() = variants.mapNotNull { it.createdAt }.minOrNull()
 }
 
 /**
