@@ -145,8 +145,7 @@ dependencies {
     // WorkManager
     implementation(libs.work.runtime.ktx)
 
-    // DataStore + Security
-    implementation(libs.datastore.preferences)
+    // Security
     implementation(libs.security.crypto)
 
     // Network

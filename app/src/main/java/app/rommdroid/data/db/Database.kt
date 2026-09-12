@@ -346,6 +346,16 @@ enum class DownloadStatus {
     QUEUED, RUNNING, SUCCEEDED, FAILED, CANCELLED;
 
     val isFinished: Boolean get() = this != QUEUED && this != RUNNING
+
+    companion object {
+        /** Most active first. Decides the one state a ROM with several files
+         *  or copies reports: an in-flight transfer outranks a finished one. */
+        val BY_ACTIVITY: List<DownloadStatus> = listOf(RUNNING, QUEUED, FAILED, SUCCEEDED, CANCELLED)
+
+        /** The most active of [statuses], or null when there are none. */
+        fun mostActive(statuses: Iterable<DownloadStatus>): DownloadStatus? =
+            statuses.minByOrNull { BY_ACTIVITY.indexOf(it) }
+    }
 }
 
 /** One requested file. URL and destination are stored rather than re-derived so

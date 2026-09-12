@@ -13,7 +13,6 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
@@ -36,12 +35,9 @@ import kotlinx.coroutines.withContext
 import app.rommdroid.data.db.BaseFolderEntity
 import app.rommdroid.data.db.PlatformEntity
 import app.rommdroid.data.db.DownloadStatus
-import app.rommdroid.data.db.RomEntity
 import app.rommdroid.data.download.DownloadItem
 import app.rommdroid.data.download.DownloadQueue
 import app.rommdroid.data.download.LocalRomIndex
-import app.rommdroid.data.download.QueueMessage
-import app.rommdroid.data.download.asMessage
 import app.rommdroid.data.repository.CredentialRepository
 import app.rommdroid.data.repository.DownloadTarget
 import app.rommdroid.data.repository.DownloadTargetRepository
@@ -49,21 +45,25 @@ import app.rommdroid.data.repository.GamepadLayout
 import app.rommdroid.data.repository.GamepadLayoutRepository
 import app.rommdroid.data.repository.RomRepository
 import app.rommdroid.data.repository.ServerConnector
+import app.rommdroid.ui.common.ConnectionState
+import app.rommdroid.ui.common.DownloadRequester
+import app.rommdroid.ui.common.QueueSnackbarEffect
+import app.rommdroid.ui.common.takeOffer
+import app.rommdroid.ui.components.BackButton
 import app.rommdroid.ui.components.GamepadAction
 import app.rommdroid.ui.components.GamepadButton
 import app.rommdroid.ui.components.GamepadHandler
 import app.rommdroid.ui.components.GamepadHint
 import app.rommdroid.ui.components.GamepadHintBar
 import app.rommdroid.ui.components.InputKind
+import app.rommdroid.ui.components.ListGamepadScrolling
 import app.rommdroid.ui.components.OutlinedInputField
-import app.rommdroid.ui.components.StickScroll
+import app.rommdroid.ui.components.TransferProgress
 import app.rommdroid.ui.components.focusOutline
 import app.rommdroid.ui.components.gamepadRow
 import app.rommdroid.ui.components.rememberButtonLayout
 import app.rommdroid.ui.components.rememberHasGamepad
 import app.rommdroid.ui.components.rememberInputFieldHandle
-import app.rommdroid.ui.components.scrollPage
-import app.rommdroid.ui.components.withButton
 import app.rommdroid.util.RomGroup
 import app.rommdroid.util.formatSize
 import app.rommdroid.util.groupRoms
@@ -78,7 +78,7 @@ import javax.inject.Inject
 @HiltViewModel
 class SearchViewModel @Inject constructor(
     private val repo: RomRepository,
-    private val queue: DownloadQueue,
+    queue: DownloadQueue,
 ) : ViewModel() {
 
     val query = MutableStateFlow("")
@@ -108,30 +108,8 @@ class SearchViewModel @Inject constructor(
         }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
-    /** Rows with a long-press in flight; the detail fetch takes a moment. */
-    private val _queueing = MutableStateFlow<Set<String>>(emptySet())
-    val queueing: StateFlow<Set<String>> = _queueing.asStateFlow()
-
-    private val _messages = MutableSharedFlow<QueueMessage>(extraBufferCapacity = 4)
-    val messages: SharedFlow<QueueMessage> = _messages.asSharedFlow()
-
     /** Same long-press gesture as the ROM list: queue the copy the row shows. */
-    fun download(group: RomGroup) {
-        if (group.key in _queueing.value) return
-        viewModelScope.launch {
-            _queueing.value += group.key
-            try {
-                val result = queue.enqueueRom(group.primary.id)
-                _messages.emit(result.asMessage(regionSummary(repo.regionsOf(group.primary))))
-            } finally {
-                _queueing.value -= group.key
-            }
-        }
-    }
-
-    fun undo(ids: List<String>) {
-        viewModelScope.launch { queue.undo(ids) }
-    }
+    val downloads = DownloadRequester(queue, repo::regionsOf, viewModelScope)
 }
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
@@ -145,13 +123,12 @@ fun SearchScreen(
     val query    by viewModel.query.collectAsState()
     val results  by viewModel.results.collectAsState()
     val offline  by viewModel.offline.collectAsState()
-    val queueing by viewModel.queueing.collectAsState()
+    val queueing by viewModel.downloads.queueing.collectAsState()
 
     val snackbarHostState = remember { SnackbarHostState() }
     val haptics = LocalHapticFeedback.current
     val queryField = rememberInputFieldHandle()
     val listState = rememberLazyListState()
-    val scope     = rememberCoroutineScope()
 
     // The row a controller is on, so X can queue it. No focus restore: this
     // screen opens on an empty query and what it opens for is the typing.
@@ -161,27 +138,22 @@ fun SearchScreen(
     GamepadHandler { action ->
         when (action) {
             GamepadAction.Search -> {
-                // A snackbar cannot be tapped with a controller, so Y takes any
-                // standing offer. Otherwise Y returns to the field, which the
-                // buttons cannot otherwise reach from down in the results.
-                val offer = snackbarHostState.currentSnackbarData
-                    ?.takeIf { it.visuals.actionLabel != null }
-                if (offer != null) offer.performAction() else queryField.requestFocus()
+                // Y takes a standing snackbar offer; otherwise it returns to
+                // the field, which the buttons cannot reach from the results.
+                if (!snackbarHostState.takeOffer()) queryField.requestFocus()
                 true
             }
             GamepadAction.Download -> {
                 focusedGroup?.let {
                     haptics.performHapticFeedback(HapticFeedbackType.LongPress)
-                    viewModel.download(it)
+                    viewModel.downloads.download(it)
                 }
                 true
             }
-            GamepadAction.PageUp   -> { scope.launch { listState.scrollPage(-1) }; true }
-            GamepadAction.PageDown -> { scope.launch { listState.scrollPage(1) }; true }
-            else                   -> false
+            else -> false
         }
     }
-    StickScroll(listState)
+    ListGamepadScrolling(listState)
 
     // A controller cannot tap into the field, so it takes focus itself one frame
     // in, once the view is attached. Only on a fresh query, so returning from a
@@ -193,25 +165,12 @@ fun SearchScreen(
         }
     }
 
-    val buttons = rememberButtonLayout()
-    LaunchedEffect(buttons) {
-        viewModel.messages.collect { message ->
-            val action = when {
-                message.undoIds.isNotEmpty() -> "Undo"
-                message.needsFolder          -> "Set folder"
-                else                         -> null
-            }
-            val result = snackbarHostState.showSnackbar(
-                message     = message.text,
-                actionLabel = action.withButton(GamepadButton.Y, buttons),
-                duration    = SnackbarDuration.Short,
-            )
-            if (result == SnackbarResult.ActionPerformed) {
-                if (message.undoIds.isNotEmpty()) viewModel.undo(message.undoIds)
-                else if (message.needsFolder) onFolderSettings()
-            }
-        }
-    }
+    QueueSnackbarEffect(
+        messages         = viewModel.downloads.messages,
+        host             = snackbarHostState,
+        onUndo           = viewModel.downloads::undo,
+        onFolderSettings = onFolderSettings,
+    )
 
     Scaffold(
         snackbarHost = { SnackbarHost(snackbarHostState) },
@@ -232,11 +191,7 @@ fun SearchScreen(
                         modifier      = Modifier.fillMaxWidth(),
                     )
                 },
-                navigationIcon = {
-                    IconButton(onClick = onBack, modifier = Modifier.focusOutline()) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back")
-                    }
-                },
+                navigationIcon = { BackButton(onBack) },
             )
         },
         bottomBar = {
@@ -270,7 +225,7 @@ fun SearchScreen(
                         onClick          = { onRomClick(rom.id) },
                         onLongClick      = {
                             haptics.performHapticFeedback(HapticFeedbackType.LongPress)
-                            viewModel.download(group)
+                            viewModel.downloads.download(group)
                         },
                         onLongClickLabel = "Download",
                         onFocused        = { focusedKey = group.key },
@@ -327,7 +282,6 @@ fun DownloadsScreen(
     val (active, finished) = items.partition { !it.status.isFinished }
 
     val listState = rememberLazyListState()
-    val scope     = rememberCoroutineScope()
 
     // X mirrors the row's trailing button, whichever it is showing.
     var focusedId by remember { mutableStateOf<String?>(null) }
@@ -345,24 +299,18 @@ fun DownloadsScreen(
                 }
                 true
             }
-            GamepadAction.PageUp   -> { scope.launch { listState.scrollPage(-1) }; true }
-            GamepadAction.PageDown -> { scope.launch { listState.scrollPage(1) }; true }
             // Start opened this screen; pressing it again closes rather than stacks.
             GamepadAction.Downloads -> { onBack(); true }
             else                    -> false
         }
     }
-    StickScroll(listState)
+    ListGamepadScrolling(listState)
 
     Scaffold(
         topBar = {
             TopAppBar(
                 title = { Text("Downloads") },
-                navigationIcon = {
-                    IconButton(onClick = onBack, modifier = Modifier.focusOutline()) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back")
-                    }
-                },
+                navigationIcon = { BackButton(onBack) },
                 actions = {
                     if (finished.isNotEmpty()) {
                         TextButton(
@@ -502,17 +450,10 @@ private fun DownloadRow(
             },
         )
         if (item.status == DownloadStatus.RUNNING) {
-            val progress = item.progress
-            if (progress != null) {
-                LinearProgressIndicator(
-                    progress = { progress },
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
-                )
-            } else {
-                LinearProgressIndicator(
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
-                )
-            }
+            TransferProgress(
+                progress = item.progress,
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
+            )
         }
     }
 }
@@ -528,15 +469,6 @@ private fun DownloadItem.statusLine(): String = when (status) {
 }
 
 // Settings
-
-/** Distinct from [SetupState] because saving here does not leave the screen:
- *  [Saved] is read in place, not a signal to navigate. */
-sealed interface ConnectionState {
-    data object Idle : ConnectionState
-    data object Loading : ConnectionState
-    data class Error(val message: String) : ConnectionState
-    data object Saved : ConnectionState
-}
 
 /**
  * Settings, including the server address and the signed-in account.
@@ -715,11 +647,7 @@ fun SettingsScreen(
         topBar = {
             TopAppBar(
                 title = { Text("Settings") },
-                navigationIcon = {
-                    IconButton(onClick = onBack, modifier = Modifier.focusOutline()) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back")
-                    }
-                },
+                navigationIcon = { BackButton(onBack) },
             )
         },
         bottomBar = {
@@ -1128,26 +1056,13 @@ fun FolderMappingScreen(
     }
 
     val listState = rememberLazyListState()
-    val scope     = rememberCoroutineScope()
-
-    GamepadHandler { action ->
-        when (action) {
-            GamepadAction.PageUp   -> { scope.launch { listState.scrollPage(-1) }; true }
-            GamepadAction.PageDown -> { scope.launch { listState.scrollPage(1) }; true }
-            else                   -> false
-        }
-    }
-    StickScroll(listState)
+    ListGamepadScrolling(listState)
 
     Scaffold(
         topBar = {
             TopAppBar(
                 title = { Text("Folder Mapping") },
-                navigationIcon = {
-                    IconButton(onClick = onBack, modifier = Modifier.focusOutline()) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back")
-                    }
-                },
+                navigationIcon = { BackButton(onBack) },
             )
         },
         bottomBar = {

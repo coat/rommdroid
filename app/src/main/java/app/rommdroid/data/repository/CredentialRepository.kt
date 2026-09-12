@@ -1,7 +1,9 @@
 package app.rommdroid.data.repository
 
 import android.content.Context
+import android.content.SharedPreferences
 import android.util.Base64
+import androidx.core.content.edit
 import androidx.security.crypto.EncryptedSharedPreferences
 import androidx.security.crypto.MasterKey
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -37,35 +39,23 @@ class CredentialRepository @Inject constructor(
 
     var serverUrl: String?
         get() = prefs.getString(KEY_SERVER_URL, null)
-        set(value) {
-            if (value == null) prefs.edit().remove(KEY_SERVER_URL).apply()
-            else prefs.edit().putString(KEY_SERVER_URL, value).apply()
-        }
+        set(value) = prefs.put(KEY_SERVER_URL, value)
 
     // Client API token, preferred over Basic auth
 
     var apiToken: String?
         get() = prefs.getString(KEY_API_TOKEN, null)
-        set(value) {
-            if (value == null) prefs.edit().remove(KEY_API_TOKEN).apply()
-            else prefs.edit().putString(KEY_API_TOKEN, value).apply()
-        }
+        set(value) = prefs.put(KEY_API_TOKEN, value)
 
     // Basic auth, used only for the initial token exchange
 
     var username: String?
         get() = prefs.getString(KEY_USERNAME, null)
-        set(value) {
-            if (value == null) prefs.edit().remove(KEY_USERNAME).apply()
-            else prefs.edit().putString(KEY_USERNAME, value).apply()
-        }
+        set(value) = prefs.put(KEY_USERNAME, value)
 
     private var password: String?
         get() = prefs.getString(KEY_PASSWORD, null)
-        set(value) {
-            if (value == null) prefs.edit().remove(KEY_PASSWORD).apply()
-            else prefs.edit().putString(KEY_PASSWORD, value).apply()
-        }
+        set(value) = prefs.put(KEY_PASSWORD, value)
 
     fun setBasicCredentials(user: String, pass: String) {
         username = user
@@ -83,7 +73,7 @@ class CredentialRepository @Inject constructor(
 
     /** Called once the token exchange succeeds; the password is not persisted. */
     fun clearPassword() {
-        prefs.edit().remove(KEY_PASSWORD).apply()
+        password = null
     }
 
     // Snapshot / restore
@@ -110,15 +100,15 @@ class CredentialRepository @Inject constructor(
     /** Wipes every stored credential, for "Disconnect / Change server".
      *  Downloaded files and folder mappings are unaffected. */
     fun clearAll() {
-        prefs.edit()
-            .remove(KEY_SERVER_URL)
-            .remove(KEY_API_TOKEN)
-            .remove(KEY_USERNAME)
-            .remove(KEY_PASSWORD)
-            .apply()
+        prefs.edit { clear() }
     }
 
     /** True once there is enough stored to make API calls. */
     val isConfigured: Boolean
         get() = !serverUrl.isNullOrBlank() && (apiToken != null || basicAuthHeader != null)
+}
+
+/** Null removes the key, so an unset value never lingers as an empty string. */
+private fun SharedPreferences.put(key: String, value: String?) = edit {
+    if (value == null) remove(key) else putString(key, value)
 }

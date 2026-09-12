@@ -16,6 +16,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import android.view.inputmethod.EditorInfo
 import app.rommdroid.data.repository.ServerConnector
+import app.rommdroid.ui.common.ConnectionState
 import app.rommdroid.ui.components.InputKind
 import app.rommdroid.ui.components.OutlinedInputField
 import app.rommdroid.ui.components.focusOutline
@@ -24,27 +25,20 @@ import javax.inject.Inject
 
 // ViewModel
 
-sealed interface SetupState {
-    data object Idle : SetupState
-    data object Loading : SetupState
-    data class Error(val message: String) : SetupState
-    data object Done : SetupState
-}
-
 @HiltViewModel
 class SetupViewModel @Inject constructor(
     private val connector: ServerConnector,
 ) : ViewModel() {
 
-    private val _state = MutableStateFlow<SetupState>(SetupState.Idle)
-    val state: StateFlow<SetupState> = _state.asStateFlow()
+    private val _state = MutableStateFlow<ConnectionState>(ConnectionState.Idle)
+    val state: StateFlow<ConnectionState> = _state.asStateFlow()
 
     fun connect(serverUrl: String, username: String, password: String) {
         viewModelScope.launch {
-            _state.value = SetupState.Loading
+            _state.value = ConnectionState.Loading
             _state.value = connector.signIn(serverUrl, username, password).fold(
-                onSuccess = { SetupState.Done },
-                onFailure = { SetupState.Error(it.message ?: "Connection failed") },
+                onSuccess = { ConnectionState.Saved },
+                onFailure = { ConnectionState.Error(it.message ?: "Connection failed") },
             )
         }
     }
@@ -69,7 +63,7 @@ fun SetupScreen(
     val passwordField = rememberInputFieldHandle()
 
     LaunchedEffect(state) {
-        if (state is SetupState.Done) onComplete()
+        if (state is ConnectionState.Saved) onComplete()
     }
 
     Scaffold { padding ->
@@ -123,10 +117,10 @@ fun SetupScreen(
                 modifier      = Modifier.fillMaxWidth(),
             )
 
-            if (state is SetupState.Error) {
+            (state as? ConnectionState.Error)?.let { error ->
                 Spacer(Modifier.height(8.dp))
                 Text(
-                    text  = (state as SetupState.Error).message,
+                    text  = error.message,
                     color = MaterialTheme.colorScheme.error,
                     style = MaterialTheme.typography.bodySmall,
                 )
@@ -136,10 +130,10 @@ fun SetupScreen(
 
             Button(
                 onClick  = { viewModel.connect(serverUrl, username, password) },
-                enabled  = state !is SetupState.Loading,
+                enabled  = state !is ConnectionState.Loading,
                 modifier = Modifier.fillMaxWidth().focusOutline(),
             ) {
-                if (state is SetupState.Loading) {
+                if (state is ConnectionState.Loading) {
                     CircularProgressIndicator(
                         modifier = Modifier.size(20.dp),
                         strokeWidth = 2.dp,

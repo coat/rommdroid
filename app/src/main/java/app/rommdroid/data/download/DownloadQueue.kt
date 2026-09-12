@@ -6,7 +6,7 @@ import androidx.work.NetworkType
 import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.WorkInfo
 import androidx.work.WorkManager
-import app.rommdroid.data.api.model.DetailedRomSchema
+import app.rommdroid.data.api.model.RomSchema
 import app.rommdroid.data.api.model.RomFileSchema
 import app.rommdroid.data.db.DownloadDao
 import app.rommdroid.data.db.DownloadEntity
@@ -116,7 +116,7 @@ class DownloadQueue @Inject constructor(
     /** Aggregate status per ROM id, so a list row can show what it already has. */
     val statusByRom: Flow<Map<Int, DownloadStatus>> = items.map { list ->
         list.groupBy { it.romId }
-            .mapValues { (_, forRom) -> forRom.minBy { STATUS_ORDER.indexOf(it.status) }.status }
+            .mapValues { (_, forRom) -> DownloadStatus.mostActive(forRom.map { it.status })!! }
     }
 
     // Enqueueing
@@ -137,7 +137,7 @@ class DownloadQueue @Inject constructor(
     }
 
     /** Queue [files] of an already-loaded [rom]. */
-    suspend fun enqueue(rom: DetailedRomSchema, files: List<RomFileSchema>): EnqueueResult {
+    suspend fun enqueue(rom: RomSchema, files: List<RomFileSchema>): EnqueueResult {
         val serverUrl = credentials.serverUrl
             ?: return EnqueueResult.Failed("Not connected - set up your server in Settings")
         val platform = platformDao.getById(rom.platformId)
@@ -308,15 +308,6 @@ class DownloadQueue @Inject constructor(
         const val TAG_FILE_PREFIX = "file_"
         const val TAG_QUEUE_PREFIX = "queue_"
 
-        /** Most-active first; decides the badge for a ROM with several files. */
-        private val STATUS_ORDER = listOf(
-            DownloadStatus.RUNNING,
-            DownloadStatus.QUEUED,
-            DownloadStatus.FAILED,
-            DownloadStatus.SUCCEEDED,
-            DownloadStatus.CANCELLED,
-        )
-
         fun queueId(romId: Int, fileId: Int) = "${romId}_$fileId"
 
         private fun workName(id: String) = "download_$id"
@@ -333,7 +324,7 @@ class DownloadQueue @Inject constructor(
 
 /** The files to fetch. The API omits the list for single-file ROMs, so one is
  *  synthesised from the filesystem name. */
-fun DetailedRomSchema.downloadableFiles(): List<RomFileSchema> =
+fun RomSchema.downloadableFiles(): List<RomFileSchema> =
     files.ifEmpty {
         listOf(
             RomFileSchema(

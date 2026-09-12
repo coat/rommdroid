@@ -5,7 +5,6 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.ArrowForwardIos
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
@@ -28,9 +27,8 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
-import app.rommdroid.data.api.model.DetailedRomSchema
+import app.rommdroid.data.api.model.RomSchema
 import app.rommdroid.data.api.model.RomFileSchema
-import app.rommdroid.data.api.model.SimpleRomSchema
 import app.rommdroid.data.db.DownloadStatus
 import app.rommdroid.data.db.PlatformDao
 import app.rommdroid.data.db.RomEntity
@@ -38,26 +36,26 @@ import app.rommdroid.data.download.DownloadItem
 import app.rommdroid.data.download.DownloadQueue
 import app.rommdroid.data.download.FolderContents
 import app.rommdroid.data.download.LocalRomIndex
-import app.rommdroid.data.download.QueueMessage
-import app.rommdroid.data.download.asMessage
 import app.rommdroid.data.download.downloadableFiles
 import app.rommdroid.data.repository.CredentialRepository
 import app.rommdroid.data.repository.DownloadTarget
 import app.rommdroid.data.repository.DownloadTargetRepository
 import app.rommdroid.data.repository.RomRepository
+import app.rommdroid.ui.common.DownloadRequester
+import app.rommdroid.ui.common.QueueSnackbarEffect
+import app.rommdroid.ui.common.takeOffer
+import app.rommdroid.ui.components.BackButton
 import app.rommdroid.ui.components.GamepadAction
 import app.rommdroid.ui.components.GamepadButton
 import app.rommdroid.ui.components.GamepadHandler
 import app.rommdroid.ui.components.GamepadHint
 import app.rommdroid.ui.components.GamepadHintBar
+import app.rommdroid.ui.components.ListGamepadScrolling
 import app.rommdroid.ui.components.RatingBadge
 import app.rommdroid.ui.components.RestoreFocus
-import app.rommdroid.ui.components.StickScroll
+import app.rommdroid.ui.components.TransferProgress
 import app.rommdroid.ui.components.focusOutline
 import app.rommdroid.ui.components.gamepadRow
-import app.rommdroid.ui.components.rememberButtonLayout
-import app.rommdroid.ui.components.scrollPage
-import app.rommdroid.ui.components.withButton
 import app.rommdroid.ui.navigation.Route
 import app.rommdroid.util.RomVariant
 import app.rommdroid.util.artworkUrl
@@ -73,7 +71,7 @@ import javax.inject.Inject
 
 sealed interface RomDetailState {
     data object Loading : RomDetailState
-    data class  Loaded(val rom: DetailedRomSchema) : RomDetailState
+    data class  Loaded(val rom: RomSchema) : RomDetailState
     data class  Error(val message: String) : RomDetailState
 }
 
@@ -88,6 +86,9 @@ class RomDetailViewModel @Inject constructor(
     private val queue: DownloadQueue,
     private val localRoms: LocalRomIndex,
 ) : ViewModel() {
+
+    /** Queues files and phrases the outcome; [cancel] stays with the queue. */
+    val requests = DownloadRequester(queue, repo::regionsOf, viewModelScope)
 
     /** The variant currently being shown; changes when the user picks another. */
     private val _romId = MutableStateFlow<Int>(
@@ -119,9 +120,6 @@ class RomDetailViewModel @Inject constructor(
         combine(_target, localRoms.revision) { target, _ -> target }
             .mapLatest { target -> target?.let { localRoms.listing(it) } ?: FolderContents.Unreadable }
             .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), FolderContents.Unreadable)
-
-    private val _messages = MutableSharedFlow<QueueMessage>(extraBufferCapacity = 4)
-    val messages: SharedFlow<QueueMessage> = _messages.asSharedFlow()
 
     /** True while a variant is being fetched over an already-rendered screen. */
     private val _refreshing = MutableStateFlow(false)
@@ -168,7 +166,7 @@ class RomDetailViewModel @Inject constructor(
 
     /** The server's sibling list, falling back to the cache. That way round
      *  because a ROM reached from search may be from an unsynced platform. */
-    private suspend fun variantsOf(rom: DetailedRomSchema): List<RomVariant> {
+    private suspend fun variantsOf(rom: RomSchema): List<RomVariant> {
         val preference = regionPreference(Locale.getDefault().country)
         // `sibling_roms` is trimmed to ids and names, so a sibling rendered
         // straight from it is a blank row reading "0 B". The cache has the rest
@@ -199,7 +197,7 @@ class RomDetailViewModel @Inject constructor(
             .sortedWith(compareBy({ regionRank(it.regions, preference) }, { it.fsName }))
     }
 
-    fun coverUrl(rom: DetailedRomSchema): String? = artworkUrl(
+    fun coverUrl(rom: RomSchema): String? = artworkUrl(
         credentials.serverUrl,
         rom.pathCoverLarge,
         rom.pathCoverSmall,
@@ -209,27 +207,18 @@ class RomDetailViewModel @Inject constructor(
     /** Queue [file]; the queue itself reports what came of it. */
     fun downloadFile(file: RomFileSchema) {
         val rom = (_state.value as? RomDetailState.Loaded)?.rom ?: return
-        viewModelScope.launch {
-            _messages.emit(queue.enqueue(rom, listOf(file)).asMessage())
-        }
+        requests.enqueue(rom, listOf(file))
     }
 
     /** Queue every file of the ROM - the whole set for a multi-disc game. */
     fun downloadAll() {
         val rom = (_state.value as? RomDetailState.Loaded)?.rom ?: return
-        viewModelScope.launch {
-            _messages.emit(queue.enqueue(rom, rom.downloadableFiles()).asMessage())
-        }
-    }
-
-    fun undo(ids: List<String>) {
-        viewModelScope.launch { queue.undo(ids) }
+        requests.enqueue(rom, rom.downloadableFiles())
     }
 
     fun cancel(id: String) {
         viewModelScope.launch { queue.cancel(id) }
     }
-
 }
 
 /** A cached copy, which knows its own filename and size. */
@@ -242,7 +231,7 @@ private fun RomEntity.toVariant(regions: List<String>) =
  * carries the "(Japan)" / "(Rev 1)" tag that tells copies apart. Size stays 0,
  * meaning unknown, and the row omits it rather than lying.
  */
-private fun SimpleRomSchema.toVariant(): RomVariant {
+private fun RomSchema.toVariant(): RomVariant {
     val label = fsName
         .ifBlank { fsNameNoExt }
         .ifBlank { fsNameNoTags }
@@ -272,7 +261,6 @@ fun RomDetailScreen(
     val snackbarHostState = remember { SnackbarHostState() }
 
     val listState = rememberLazyListState()
-    val scope     = rememberCoroutineScope()
 
     // Focus starts on the first file: the cover and summary above it are
     // reading matter with nothing to activate.
@@ -288,38 +276,18 @@ fun RomDetailScreen(
                 true
             }
             // A controller cannot tap a snackbar, so Y takes its offer.
-            GamepadAction.Search -> {
-                snackbarHostState.currentSnackbarData
-                    ?.takeIf { it.visuals.actionLabel != null }
-                    ?.performAction()
-                true
-            }
-            GamepadAction.PageUp   -> { scope.launch { listState.scrollPage(-1) }; true }
-            GamepadAction.PageDown -> { scope.launch { listState.scrollPage(1) }; true }
-            else                   -> false
+            GamepadAction.Search -> { snackbarHostState.takeOffer(); true }
+            else                 -> false
         }
     }
-    StickScroll(listState)
+    ListGamepadScrolling(listState)
 
-    val buttons = rememberButtonLayout()
-    LaunchedEffect(buttons) {
-        viewModel.messages.collect { message ->
-            val action = when {
-                message.undoIds.isNotEmpty() -> "Undo"
-                message.needsFolder          -> "Set folder"
-                else                         -> null
-            }
-            val result = snackbarHostState.showSnackbar(
-                message     = message.text,
-                actionLabel = action.withButton(GamepadButton.Y, buttons),
-                duration    = SnackbarDuration.Short,
-            )
-            if (result == SnackbarResult.ActionPerformed) {
-                if (message.undoIds.isNotEmpty()) viewModel.undo(message.undoIds)
-                else if (message.needsFolder) onFolderSettings()
-            }
-        }
-    }
+    QueueSnackbarEffect(
+        messages         = viewModel.requests.messages,
+        host             = snackbarHostState,
+        onUndo           = viewModel.requests::undo,
+        onFolderSettings = onFolderSettings,
+    )
 
     Scaffold(
         snackbarHost = { SnackbarHost(snackbarHostState) },
@@ -329,11 +297,7 @@ fun RomDetailScreen(
                     val title = (state as? RomDetailState.Loaded)?.rom?.name ?: "ROM"
                     Text(title, maxLines = 1)
                 },
-                navigationIcon = {
-                    IconButton(onClick = onBack, modifier = Modifier.focusOutline()) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back")
-                    }
-                },
+                navigationIcon = { BackButton(onBack) },
             )
         },
         bottomBar = {
@@ -674,17 +638,7 @@ private fun RomFileRow(
             },
         )
         if (download?.status == DownloadStatus.RUNNING) {
-            val progress = download.progress
-            if (progress != null) {
-                LinearProgressIndicator(
-                    progress = { progress },
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
-                )
-            } else {
-                LinearProgressIndicator(
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
-                )
-            }
+            TransferProgress(download.progress, Modifier.padding(horizontal = 16.dp))
         }
     }
 }

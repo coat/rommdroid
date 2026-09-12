@@ -20,10 +20,7 @@ data class HeartbeatFrontend(
 data class HeartbeatResponse(
     @SerialName("SYSTEM")   val system: HeartbeatSystem = HeartbeatSystem(),
     @SerialName("FRONTEND") val frontend: HeartbeatFrontend = HeartbeatFrontend(),
-) {
-    val version: String get() = system.version
-    val showSetupWizard: Boolean get() = system.showSetupWizard
-}
+)
 
 @Serializable
 data class UserResponse(
@@ -57,20 +54,9 @@ data class ClientTokenResponse(
     @SerialName("device_id")    val deviceId: String? = null,
     /** Only present on token creation (ClientTokenCreateSchema). */
     @SerialName("raw_token")    val rawToken: String? = null,
-) {
-    /** The actual token value to store. */
-    val token: String? get() = rawToken
-}
-
-@Serializable
-data class PairResponse(
-    val code: String,
 )
 
-@Serializable
-data class ExchangeTokenRequest(
-    val code: String,
-)
+
 
 // Platforms
 
@@ -125,7 +111,7 @@ data class CollectionSchema(
 
 @Serializable
 data class PagedRomResponse(
-    val items: List<SimpleRomSchema>,
+    val items: List<RomSchema>,
     val total: Int,
     val limit: Int,
     val offset: Int,
@@ -167,8 +153,10 @@ data class RomMetadataSchema(
     @SerialName("average_rating")       val averageRating: Double? = null,
 )
 
+/** A ROM as both the listing and the detail endpoint describe it: RomM's
+ *  SimpleRomSchema and DetailedRomSchema carry the same fields. */
 @Serializable
-data class SimpleRomSchema(
+data class RomSchema(
     val id: Int,
     // Platform
     @SerialName("platform_id")              val platformId: Int = 0,
@@ -235,96 +223,10 @@ data class SimpleRomSchema(
     @SerialName("created_at")               val createdAt: String = "",
     @SerialName("updated_at")               val updatedAt: String? = null,
     // Relations
-    @SerialName("sibling_roms")             val siblingRoms: List<SimpleRomSchema> = emptyList(),
-    val files: List<RomFileSchema> = emptyList(),
-    // Derived metadata
-    val metadatum: RomMetadataSchema = RomMetadataSchema(),
-)
-
-@Serializable
-data class DetailedRomSchema(
-    val id: Int,
-    // Platform
-    @SerialName("platform_id")              val platformId: Int = 0,
-    @SerialName("platform_slug")            val platformSlug: String = "",
-    @SerialName("platform_fs_slug")         val platformFsSlug: String = "",
-    @SerialName("platform_custom_name")     val platformCustomName: String? = null,
-    @SerialName("platform_display_name")    val platformDisplayName: String = "",
-    // Filesystem
-    @SerialName("fs_name")                  val fsName: String = "",
-    @SerialName("fs_name_no_tags")          val fsNameNoTags: String = "",
-    @SerialName("fs_name_no_ext")           val fsNameNoExt: String = "",
-    @SerialName("fs_extension")             val fsExtension: String = "",
-    @SerialName("fs_path")                  val fsPath: String = "",
-    @SerialName("fs_size_bytes")            val fsSizeBytes: Long = 0L,
-    @SerialName("full_path")                val fullPath: String = "",
-    @SerialName("missing_from_fs")          val missingFromFs: Boolean = false,
-    // Metadata IDs (unused)
-    @SerialName("igdb_id")                  val igdbId: Int? = null,
-    @SerialName("sgdb_id")                  val sgdbId: Int? = null,
-    @SerialName("moby_id")                  val mobyId: Int? = null,
-    @SerialName("ss_id")                    val ssId: Int? = null,
-    @SerialName("ra_id")                    val raId: Int? = null,
-    @SerialName("launchbox_id")             val launchboxId: Int? = null,
-    @SerialName("hasheous_id")              val hasheousId: Int? = null,
-    @SerialName("tgdb_id")                  val tgdbId: Int? = null,
-    @SerialName("flashpoint_id")            val flashpointId: String? = null,
-    @SerialName("hltb_id")                  val hltbId: Int? = null,
-    @SerialName("gamelist_id")              val gamelistId: String? = null,
-    @SerialName("libretro_id")              val libretroId: String? = null,
-    // Display fields
-    val name: String? = null,
-    @SerialName("name_sort_key")            val nameSortKey: String? = null,
-    val slug: String? = null,
-    val summary: String? = null,
-    @SerialName("alternative_names")        val alternativeNames: List<String> = emptyList(),
-    @SerialName("youtube_video_id")         val youtubeVideoId: String? = null,
-    val regions: List<String> = emptyList(),
-    val languages: List<String> = emptyList(),
-    val tags: List<String> = emptyList(),
-    // Cover / media
-    @SerialName("url_cover")                val urlCover: String? = null,
-    @SerialName("path_cover_small")         val pathCoverSmall: String? = null,
-    @SerialName("path_cover_large")         val pathCoverLarge: String? = null,
-    @SerialName("has_manual")               val hasManual: Boolean = false,
-    @SerialName("has_soundtrack")           val hasSoundtrack: Boolean = false,
-    @SerialName("path_manual")              val pathManual: String? = null,
-    @SerialName("url_manual")               val urlManual: String? = null,
-    @SerialName("path_video")               val pathVideo: String? = null,
-    // Identification
-    @SerialName("is_unidentified")          val isUnidentified: Boolean = false,
-    @SerialName("is_identified")            val isIdentified: Boolean = false,
-    val revision: String? = null,
-    // Hashes
-    @SerialName("crc_hash")                 val crcHash: String? = null,
-    @SerialName("md5_hash")                 val md5Hash: String? = null,
-    @SerialName("sha1_hash")                val sha1Hash: String? = null,
-    @SerialName("ra_hash")                  val raHash: String? = null,
-    // File structure flags
-    @SerialName("has_simple_single_file")   val hasSimpleSingleFile: Boolean = false,
-    @SerialName("has_nested_single_file")   val hasNestedSingleFile: Boolean = false,
-    @SerialName("has_multiple_files")       val hasMultipleFiles: Boolean = false,
-    @SerialName("has_notes")                val hasNotes: Boolean = false,
-    // Timestamps
-    @SerialName("created_at")               val createdAt: String = "",
-    @SerialName("updated_at")               val updatedAt: String? = null,
-    // Relations (unused)
-    @SerialName("sibling_roms")             val siblingRoms: List<SimpleRomSchema> = emptyList(),
+    @SerialName("sibling_roms")             val siblingRoms: List<RomSchema> = emptyList(),
     val files: List<RomFileSchema> = emptyList(),
     // Derived metadata
     /** Genres, companies, the aggregate rating. The API nests all of it under
      *  "metadatum"; none of it exists alongside [summary]. */
     val metadatum: RomMetadataSchema = RomMetadataSchema(),
-)
-
-// Firmware
-
-@Serializable
-data class FirmwareSchema(
-    val id: Int,
-    @SerialName("platform_id")   val platformId: Int,
-    @SerialName("file_name")     val fileName: String,
-    @SerialName("file_size_bytes") val fileSizeBytes: Long = 0L,
-    val crc_hash: String? = null,
-    val md5_hash: String? = null,
 )

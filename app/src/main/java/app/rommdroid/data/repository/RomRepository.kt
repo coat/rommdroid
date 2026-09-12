@@ -2,9 +2,9 @@ package app.rommdroid.data.repository
 
 import app.rommdroid.data.api.RomMApi
 import app.rommdroid.data.api.model.CollectionSchema
-import app.rommdroid.data.api.model.DetailedRomSchema
+import app.rommdroid.data.api.model.PagedRomResponse
+import app.rommdroid.data.api.model.RomSchema
 import app.rommdroid.data.api.model.PlatformSchema
-import app.rommdroid.data.api.model.SimpleRomSchema
 import androidx.room.withTransaction
 import app.rommdroid.data.db.*
 import app.rommdroid.util.decodeHtmlEntities
@@ -69,29 +69,16 @@ class RomRepository @Inject constructor(
     /**
      * Fetch every page of [platformId]'s ROMs, then write. A full refresh
      * ([updatedAfter] null) replaces the platform's rows.
-     *
-     * Collecting all pages first costs peak memory on the order of the
-     * platform's size, and buys not emptying the cache when a handheld goes out
-     * of range mid-sync.
      */
     suspend fun syncRoms(platformId: Int, updatedAfter: String? = null) {
-        val fetched = mutableListOf<RomEntity>()
-        var offset = 0
-        val pageSize = 100
-        do {
-            val page = api.getRoms(
-                platformIds = platformId,
-                limit       = pageSize,
-                offset      = offset,
-                withCharIndex    = false,
-                withRomIdIndex   = false,
-                withFilterValues = false,
-                updatedAfter     = updatedAfter,
+        val fetched = fetchAllRoms { limit, offset ->
+            api.getRoms(
+                platformIds  = platformId,
+                limit        = limit,
+                offset       = offset,
+                updatedAfter = updatedAfter,
             )
-            fetched += page.items.map { it.toEntity() }
-            offset += pageSize
-        } while (offset < page.total)
-
+        }
         if (updatedAfter == null) {
             romDao.replacePlatform(platformId, fetched)
         } else {
@@ -99,7 +86,7 @@ class RomRepository @Inject constructor(
         }
     }
 
-    suspend fun getRomDetail(id: Int): DetailedRomSchema = api.getRom(id).run {
+    suspend fun getRomDetail(id: Int): RomSchema = api.getRom(id).run {
         copy(
             name    = name?.decodeHtmlEntities(),
             summary = summary?.decodeHtmlEntities(),
@@ -112,13 +99,7 @@ class RomRepository @Inject constructor(
      * a fraction of the hits. Callers fall back to [searchLocal] when this throws.
      */
     suspend fun searchRemote(query: String, limit: Int = 100): List<RomEntity> =
-        api.getRoms(
-            searchTerm = query,
-            limit      = limit,
-            withCharIndex    = false,
-            withRomIdIndex   = false,
-            withFilterValues = false,
-        ).items.map { it.toEntity() }
+        api.getRoms(searchTerm = query, limit = limit).items.map { it.toEntity() }
 
     /** Offline fallback - only covers platforms that have been synced. */
     suspend fun searchLocal(query: String): List<RomEntity> = romDao.search(query)
@@ -150,32 +131,37 @@ class RomRepository @Inject constructor(
     }
 
     /**
-     * Fetch one collection's ROMs, paging as [syncRoms] does. The ROM rows are
-     * upserted rather than swapped, since they belong to their platforms; only
-     * the membership is replaced.
+     * Fetch one collection's ROMs. The ROM rows are upserted rather than
+     * swapped, since they belong to their platforms; only the membership is
+     * replaced.
      */
     suspend fun syncCollectionRoms(collectionId: Int) {
-        val fetched = mutableListOf<RomEntity>()
-        var offset = 0
-        val pageSize = 100
-        do {
-            val page = api.getRoms(
-                collectionId     = collectionId,
-                limit            = pageSize,
-                offset           = offset,
-                withCharIndex    = false,
-                withRomIdIndex   = false,
-                withFilterValues = false,
-            )
-            fetched += page.items.map { it.toEntity() }
-            offset += pageSize
-        } while (offset < page.total)
-
+        val fetched = fetchAllRoms { limit, offset ->
+            api.getRoms(collectionId = collectionId, limit = limit, offset = offset)
+        }
         romDao.upsertAll(fetched)
         collectionDao.replaceMembership(
             collectionId = collectionId,
             rows         = fetched.map { CollectionRomEntity(collectionId, it.id) },
         )
+    }
+
+    /**
+     * Every page of one ROM listing, mapped. Collected before anything is
+     * written: peak memory on the order of the platform's size buys not
+     * emptying the cache when a handheld goes out of range mid-sync.
+     */
+    private suspend fun fetchAllRoms(
+        page: suspend (limit: Int, offset: Int) -> PagedRomResponse,
+    ): List<RomEntity> {
+        val fetched = mutableListOf<RomEntity>()
+        var offset = 0
+        do {
+            val response = page(PAGE_SIZE, offset)
+            fetched += response.items.map { it.toEntity() }
+            offset += PAGE_SIZE
+        } while (offset < response.total)
+        return fetched
     }
 
     // Regional variants
@@ -246,7 +232,7 @@ class RomRepository @Inject constructor(
         updatedAt      = updatedAt,
     )
 
-    private fun SimpleRomSchema.toEntity() = RomEntity(
+    private fun RomSchema.toEntity() = RomEntity(
         id                    = id,
         platformId            = platformId,
         platformSlug          = platformSlug,
@@ -272,4 +258,8 @@ class RomRepository @Inject constructor(
         createdAt             = createdAt.takeIf { it.isNotBlank() },
         groupKey              = romGroupKey(platformId, igdbId, slug, fsNameNoTags),
     )
+
+    private companion object {
+        const val PAGE_SIZE = 100
+    }
 }

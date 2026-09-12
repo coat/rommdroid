@@ -48,27 +48,28 @@ import app.rommdroid.data.db.RomEntity
 import app.rommdroid.data.download.DownloadQueue
 import app.rommdroid.data.download.FolderContents
 import app.rommdroid.data.download.LocalRomIndex
-import app.rommdroid.data.download.QueueMessage
-import app.rommdroid.data.download.asMessage
 import app.rommdroid.data.repository.CredentialRepository
 import app.rommdroid.data.repository.DownloadTargetRepository
 import app.rommdroid.data.repository.RomListPreferencesRepository
 import app.rommdroid.data.repository.RomRepository
+import app.rommdroid.ui.common.DownloadRequester
+import app.rommdroid.ui.common.QueueSnackbarEffect
+import app.rommdroid.ui.common.SyncTracker
+import app.rommdroid.ui.common.takeOffer
 import app.rommdroid.ui.components.FastScroller
 import app.rommdroid.ui.components.GamepadAction
 import app.rommdroid.ui.components.GamepadButton
 import app.rommdroid.ui.components.GamepadHandler
 import app.rommdroid.ui.components.GamepadHint
 import app.rommdroid.ui.components.GamepadHintBar
+import app.rommdroid.ui.components.ListGamepadScrolling
 import app.rommdroid.ui.components.OutlinedInputField
 import app.rommdroid.ui.components.RatingBadge
 import app.rommdroid.ui.components.RestoreFocus
-import app.rommdroid.ui.components.StickScroll
 import app.rommdroid.ui.components.focusOutline
 import app.rommdroid.ui.components.gamepadRow
 import app.rommdroid.ui.components.rememberButtonLayout
 import app.rommdroid.ui.components.rememberInputFieldHandle
-import app.rommdroid.ui.components.scrollPage
 import app.rommdroid.ui.components.withButton
 import app.rommdroid.ui.navigation.Route
 import app.rommdroid.util.NO_REGION
@@ -102,7 +103,7 @@ class RomListViewModel @Inject constructor(
     savedStateHandle: SavedStateHandle,
     private val repo: RomRepository,
     private val credentials: CredentialRepository,
-    private val queue: DownloadQueue,
+    queue: DownloadQueue,
     private val platformDao: PlatformDao,
     private val downloadTargets: DownloadTargetRepository,
     private val localRoms: LocalRomIndex,
@@ -241,55 +242,22 @@ class RomListViewModel @Inject constructor(
     /** True when a row should name its platform - only a collection mixes them. */
     val mixedPlatforms: Boolean = source is Source.Collection
 
-    /** Rows with a long-press in flight; the detail fetch takes a moment. */
-    private val _queueing = MutableStateFlow<Set<String>>(emptySet())
-    val queueing: StateFlow<Set<String>> = _queueing.asStateFlow()
+    /** Long-press, or X, on a row. */
+    val downloads = DownloadRequester(queue, repo::regionsOf, viewModelScope)
 
-    private val _messages = MutableSharedFlow<QueueMessage>(extraBufferCapacity = 4)
-    val messages: SharedFlow<QueueMessage> = _messages.asSharedFlow()
-
-    private val _syncing = MutableStateFlow(false)
-    val syncing: StateFlow<Boolean> = _syncing.asStateFlow()
-
-    private val _error = MutableStateFlow<String?>(null)
-    val error: StateFlow<String?> = _error.asStateFlow()
+    val sync = SyncTracker()
 
     init { refresh() }
 
-    fun refresh(fullSync: Boolean = false) {
+    fun refresh() {
         viewModelScope.launch {
-            _syncing.value = true
-            _error.value   = null
-            try {
+            sync.run {
                 when (source) {
                     is Source.Platform   -> repo.syncRoms(source.id)
                     is Source.Collection -> repo.syncCollectionRoms(source.id)
                 }
-            } catch (e: Exception) {
-                _error.value = e.message
-            } finally {
-                _syncing.value = false
             }
         }
-    }
-
-    /** Queue the preferred variant, the one the row shows. The message names its
-     *  region so an unwanted pick is obvious enough to undo. */
-    fun download(group: RomGroup) {
-        if (group.key in _queueing.value) return
-        viewModelScope.launch {
-            _queueing.value += group.key
-            try {
-                val result = queue.enqueueRom(group.primary.id)
-                _messages.emit(result.asMessage(regionSummary(repo.regionsOf(group.primary))))
-            } finally {
-                _queueing.value -= group.key
-            }
-        }
-    }
-
-    fun undo(ids: List<String>) {
-        viewModelScope.launch { queue.undo(ids) }
     }
 
     fun coverUrl(rom: RomEntity): String? = artworkUrl(
@@ -314,10 +282,10 @@ fun RomListScreen(
     val sections by viewModel.sections.collectAsState()
     val title    by viewModel.title.collectAsState()
     val filter   by viewModel.filter.collectAsState()
-    val syncing  by viewModel.syncing.collectAsState()
-    val error    by viewModel.error.collectAsState()
+    val syncing  by viewModel.sync.syncing.collectAsState()
+    val error    by viewModel.sync.error.collectAsState()
     val statuses by viewModel.downloadStatus.collectAsState()
-    val queueing by viewModel.queueing.collectAsState()
+    val queueing by viewModel.downloads.queueing.collectAsState()
     val onDevice by viewModel.onDevice.collectAsState()
     val sort     by viewModel.sort.collectAsState()
     val regions  by viewModel.regions.collectAsState()
@@ -435,17 +403,13 @@ fun RomListScreen(
 
     GamepadHandler { action ->
         when (action) {
-            // A snackbar cannot be tapped with a controller, so Y takes any
-            // standing offer. Its label names the button.
+            // Y takes a standing snackbar offer. Otherwise it opens the filter,
+            // or reopens the keyboard the Search key put away.
             GamepadAction.Search -> {
-                val offer = snackbarHostState.currentSnackbarData
-                    ?.takeIf { it.visuals.actionLabel != null }
                 when {
-                    offer != null -> offer.performAction()
-                    // Otherwise Y opens the filter, or reopens the keyboard the
-                    // Search key put away.
-                    filtering     -> filterField.requestFocus()
-                    else          -> filtering = true
+                    snackbarHostState.takeOffer() -> Unit
+                    filtering                     -> filterField.requestFocus()
+                    else                          -> filtering = true
                 }
                 true
             }
@@ -453,18 +417,16 @@ fun RomListScreen(
             GamepadAction.Download -> {
                 focusedGroup?.let {
                     haptics.performHapticFeedback(HapticFeedbackType.LongPress)
-                    viewModel.download(it)
+                    viewModel.downloads.download(it)
                 }
                 true
             }
             GamepadAction.SectionPrev -> jumpSection(forwards = false)
             GamepadAction.SectionNext -> jumpSection(forwards = true)
-            GamepadAction.PageUp      -> { scope.launch { listState.scrollPage(-1); focusTopRow() }; true }
-            GamepadAction.PageDown    -> { scope.launch { listState.scrollPage(1); focusTopRow() }; true }
             else                      -> false
         }
     }
-    StickScroll(listState)
+    ListGamepadScrolling(listState) { focusTopRow() }
 
     // Sync failures share the queue's snackbar host.
     LaunchedEffect(error, buttons) {
@@ -477,24 +439,12 @@ fun RomListScreen(
         if (result == SnackbarResult.ActionPerformed) viewModel.refresh()
     }
 
-    LaunchedEffect(buttons) {
-        viewModel.messages.collect { message ->
-            val action = when {
-                message.undoIds.isNotEmpty() -> "Undo"
-                message.needsFolder          -> "Set folder"
-                else                         -> null
-            }
-            val result = snackbarHostState.showSnackbar(
-                message     = message.text,
-                actionLabel = action.withButton(GamepadButton.Y, buttons),
-                duration    = SnackbarDuration.Short,
-            )
-            if (result == SnackbarResult.ActionPerformed) {
-                if (message.undoIds.isNotEmpty()) viewModel.undo(message.undoIds)
-                else if (message.needsFolder) onFolderSettings()
-            }
-        }
-    }
+    QueueSnackbarEffect(
+        messages         = viewModel.downloads.messages,
+        host             = snackbarHostState,
+        onUndo           = viewModel.downloads::undo,
+        onFolderSettings = onFolderSettings,
+    )
 
     Scaffold(
         snackbarHost = { SnackbarHost(snackbarHostState) },
@@ -647,7 +597,7 @@ fun RomListScreen(
                                         onClick     = { onRomClick(group.primary.id) },
                                         onLongClick = {
                                             haptics.performHapticFeedback(HapticFeedbackType.LongPress)
-                                            viewModel.download(group)
+                                            viewModel.downloads.download(group)
                                         },
                                         onFocused   = { focusedKey = group.key },
                                         focusRequester = rowFocus.takeIf { group.key == focusTarget },
@@ -676,8 +626,7 @@ fun RomListScreen(
 /** The most active state across the copies, so a row reads "downloaded"
  *  whichever variant the user took. */
 private fun RomGroup.downloadStatus(statuses: Map<Int, DownloadStatus>): DownloadStatus? =
-    variants.mapNotNull { statuses[it.id] }
-        .minByOrNull { STATUS_PRIORITY.indexOf(it) }
+    DownloadStatus.mostActive(variants.mapNotNull { statuses[it.id] })
 
 /**
  * True when any copy is already in its platform's folder. Independent of the
@@ -695,14 +644,6 @@ private fun RomGroup.isOnDevice(byPlatform: Map<Int, FolderContents>): Boolean =
 private fun RomGroup.matches(needle: String): Boolean =
     primary.displayName.contains(needle, ignoreCase = true) ||
         primary.fsNameNoTags.contains(needle, ignoreCase = true)
-
-private val STATUS_PRIORITY = listOf(
-    DownloadStatus.RUNNING,
-    DownloadStatus.QUEUED,
-    DownloadStatus.FAILED,
-    DownloadStatus.SUCCEEDED,
-    DownloadStatus.CANCELLED,
-)
 
 /**
  * The sort keys and the region chips, one scrolling row each. Rows that scroll

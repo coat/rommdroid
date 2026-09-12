@@ -5,7 +5,6 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Bookmarks
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.Refresh
@@ -27,16 +26,16 @@ import kotlinx.coroutines.launch
 import app.rommdroid.data.db.CollectionEntity
 import app.rommdroid.data.repository.CredentialRepository
 import app.rommdroid.data.repository.RomRepository
-import app.rommdroid.ui.components.GamepadAction
+import app.rommdroid.ui.common.SyncTracker
+import app.rommdroid.ui.components.BackButton
+import app.rommdroid.ui.components.ConnectionError
 import app.rommdroid.ui.components.GamepadButton
-import app.rommdroid.ui.components.GamepadHandler
 import app.rommdroid.ui.components.GamepadHint
 import app.rommdroid.ui.components.GamepadHintBar
+import app.rommdroid.ui.components.ListGamepadScrolling
 import app.rommdroid.ui.components.RestoreFocus
-import app.rommdroid.ui.components.StickScroll
 import app.rommdroid.ui.components.focusOutline
 import app.rommdroid.ui.components.gamepadRow
-import app.rommdroid.ui.components.scrollPage
 import app.rommdroid.util.artworkUrl
 import javax.inject.Inject
 
@@ -52,11 +51,7 @@ class CollectionListViewModel @Inject constructor(
         repo.observeCollections()
             .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
-    private val _syncing = MutableStateFlow(false)
-    val syncing: StateFlow<Boolean> = _syncing.asStateFlow()
-
-    private val _error = MutableStateFlow<String?>(null)
-    val error: StateFlow<String?> = _error.asStateFlow()
+    val sync = SyncTracker()
 
     init {
         refresh()
@@ -65,17 +60,7 @@ class CollectionListViewModel @Inject constructor(
     /** The platform list already synced these on the way in, so this is for a
      *  collection changed while the app was open, and for retrying a failure. */
     fun refresh() {
-        viewModelScope.launch {
-            _syncing.value = true
-            _error.value   = null
-            try {
-                repo.syncCollections()
-            } catch (e: Exception) {
-                _error.value = e.message
-            } finally {
-                _syncing.value = false
-            }
-        }
+        viewModelScope.launch { sync.run { repo.syncCollections() } }
     }
 
     fun coverUrl(collection: CollectionEntity): String? = artworkUrl(
@@ -96,11 +81,10 @@ fun CollectionListScreen(
     onBack: () -> Unit,
 ) {
     val collections by viewModel.collections.collectAsState()
-    val syncing     by viewModel.syncing.collectAsState()
-    val error       by viewModel.error.collectAsState()
+    val syncing     by viewModel.sync.syncing.collectAsState()
+    val error       by viewModel.sync.error.collectAsState()
 
     val listState = rememberLazyListState()
-    val scope     = rememberCoroutineScope()
 
     // As on the platform list: the focused row survives a trip into a collection.
     var focusedId by rememberSaveable { mutableStateOf<Int?>(null) }
@@ -109,24 +93,13 @@ fun CollectionListScreen(
         ?: collections.firstOrNull()?.id
     RestoreFocus(rowFocus, ready = focusTarget != null)
 
-    GamepadHandler { action ->
-        when (action) {
-            GamepadAction.PageUp   -> { scope.launch { listState.scrollPage(-1) }; true }
-            GamepadAction.PageDown -> { scope.launch { listState.scrollPage(1) }; true }
-            else                   -> false
-        }
-    }
-    StickScroll(listState)
+    ListGamepadScrolling(listState)
 
     Scaffold(
         topBar = {
             TopAppBar(
                 title = { Text("Collections") },
-                navigationIcon = {
-                    IconButton(onClick = onBack, modifier = Modifier.focusOutline()) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
-                    }
-                },
+                navigationIcon = { BackButton(onBack) },
                 actions = {
                     IconButton(
                         onClick  = { viewModel.refresh() },
@@ -153,16 +126,7 @@ fun CollectionListScreen(
                     CircularProgressIndicator(Modifier.align(Alignment.Center))
                 }
                 error != null && collections.isEmpty() -> {
-                    Column(
-                        Modifier.align(Alignment.Center).padding(24.dp),
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                    ) {
-                        Text("Could not reach server", style = MaterialTheme.typography.titleMedium)
-                        Spacer(Modifier.height(8.dp))
-                        Text(error ?: "", style = MaterialTheme.typography.bodySmall)
-                        Spacer(Modifier.height(16.dp))
-                        Button(onClick = { viewModel.refresh() }) { Text("Retry") }
-                    }
+                    ConnectionError(error, onRetry = viewModel::refresh, Modifier.align(Alignment.Center))
                 }
                 // Reachable when the last collection is deleted while this
                 // screen is open, and the row that leads here is already gone.

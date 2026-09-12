@@ -22,18 +22,18 @@ import kotlinx.coroutines.launch
 import app.rommdroid.data.db.PlatformEntity
 import app.rommdroid.data.repository.CredentialRepository
 import app.rommdroid.data.repository.RomRepository
+import app.rommdroid.ui.common.SyncTracker
+import app.rommdroid.ui.components.ConnectionError
 import app.rommdroid.ui.components.GamepadAction
 import app.rommdroid.ui.components.GamepadButton
 import app.rommdroid.ui.components.GamepadHandler
 import app.rommdroid.ui.components.GamepadHint
 import app.rommdroid.ui.components.GamepadHintBar
+import app.rommdroid.ui.components.ListGamepadScrolling
 import app.rommdroid.ui.components.RestoreFocus
-import app.rommdroid.ui.components.StickScroll
 import app.rommdroid.ui.components.focusOutline
 import app.rommdroid.ui.components.gamepadRow
-import app.rommdroid.ui.components.scrollPage
 import app.rommdroid.util.artworkUrl
-import app.rommdroid.util.formatSize
 import javax.inject.Inject
 
 // ViewModel
@@ -54,11 +54,7 @@ class PlatformListViewModel @Inject constructor(
         repo.observeCollectionCount()
             .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), 0)
 
-    private val _syncing = MutableStateFlow(false)
-    val syncing: StateFlow<Boolean> = _syncing.asStateFlow()
-
-    private val _error = MutableStateFlow<String?>(null)
-    val error: StateFlow<String?> = _error.asStateFlow()
+    val sync = SyncTracker()
 
     init {
         refresh()
@@ -66,27 +62,14 @@ class PlatformListViewModel @Inject constructor(
 
     fun refresh() {
         viewModelScope.launch {
-            _syncing.value = true
-            _error.value   = null
-            // One refresh, two fetches: a server too old to serve collections,
-            // or a token minted before this app asked for collections.read,
-            // must not take the platform list down with it. When both fail the
-            // platforms' failure is the one worth reporting.
-            try {
-                var failure: Exception? = null
-                try {
-                    repo.syncPlatforms()
-                } catch (e: Exception) {
-                    failure = e
-                }
-                try {
-                    repo.syncCollections()
-                } catch (e: Exception) {
-                    if (failure == null) failure = e
-                }
-                _error.value = failure?.message
-            } finally {
-                _syncing.value = false
+            sync.run {
+                // One refresh, two fetches: a server too old to serve
+                // collections, or a token minted before this app asked for
+                // collections.read, must not take the platform list down with
+                // it. When both fail the platforms' failure is the one reported.
+                val platforms = runCatching { repo.syncPlatforms() }
+                val collections = runCatching { repo.syncCollections() }
+                (platforms.exceptionOrNull() ?: collections.exceptionOrNull())?.let { throw it }
             }
         }
     }
@@ -111,11 +94,10 @@ fun PlatformListScreen(
 ) {
     val platforms   by viewModel.platforms.collectAsState()
     val collections by viewModel.collectionCount.collectAsState()
-    val syncing     by viewModel.syncing.collectAsState()
-    val error       by viewModel.error.collectAsState()
+    val syncing     by viewModel.sync.syncing.collectAsState()
+    val error       by viewModel.sync.error.collectAsState()
 
     val listState = rememberLazyListState()
-    val scope     = rememberCoroutineScope()
 
     // Which row the controller is on, kept across a trip into a platform. Keyed
     // by string because the pinned Collections row has no platform id.
@@ -144,13 +126,11 @@ fun PlatformListScreen(
 
     GamepadHandler { action ->
         when (action) {
-            GamepadAction.Search   -> { onSearchClick(); true }
-            GamepadAction.PageUp   -> { scope.launch { listState.scrollPage(-1) }; true }
-            GamepadAction.PageDown -> { scope.launch { listState.scrollPage(1) }; true }
-            else                   -> false
+            GamepadAction.Search -> { onSearchClick(); true }
+            else                 -> false
         }
     }
-    StickScroll(listState)
+    ListGamepadScrolling(listState)
 
     Scaffold(
         topBar = {
@@ -195,16 +175,7 @@ fun PlatformListScreen(
                     CircularProgressIndicator(Modifier.align(Alignment.Center))
                 }
                 error != null && platforms.isEmpty() -> {
-                    Column(
-                        Modifier.align(Alignment.Center).padding(24.dp),
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                    ) {
-                        Text("Could not reach server", style = MaterialTheme.typography.titleMedium)
-                        Spacer(Modifier.height(8.dp))
-                        Text(error ?: "", style = MaterialTheme.typography.bodySmall)
-                        Spacer(Modifier.height(16.dp))
-                        Button(onClick = { viewModel.refresh() }) { Text("Retry") }
-                    }
+                    ConnectionError(error, onRetry = viewModel::refresh, Modifier.align(Alignment.Center))
                 }
                 else -> {
                     LazyColumn(state = listState) {
