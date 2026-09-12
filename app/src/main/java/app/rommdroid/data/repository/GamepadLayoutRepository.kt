@@ -1,6 +1,7 @@
 package app.rommdroid.data.repository
 
 import android.content.Context
+import app.rommdroid.domain.GamepadLayout
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -8,18 +9,6 @@ import kotlinx.coroutines.flow.asStateFlow
 import javax.inject.Inject
 import javax.inject.Singleton
 
-/**
- * Which of the two face-button letterings the hints print. The positions are
- * fixed; only the letters move. Android's keycodes name them the Xbox way (A
- * bottom, B right), a Nintendo pad prints the other pairing on the same spots.
- *
- * Asked rather than detected: handhelds ship a "controller style" switch that
- * changes which keycode each position sends, both styles send the same ten
- * keycodes, and nothing in the API reports the setting.
- * `InputDevice.getKeyCodeForKeyLocation` is defined against a reference QWERTY
- * keyboard and knows nothing about gamepads.
- */
-enum class GamepadLayout { Xbox, Nintendo }
 
 /** Its own unencrypted preferences file: a display preference in the credential
  *  store would be tied to a keystore key that a disconnect throws away. */

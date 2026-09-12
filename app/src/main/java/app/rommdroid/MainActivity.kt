@@ -11,18 +11,18 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.CompositionLocalProvider
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.core.content.ContextCompat
 import dagger.hilt.android.AndroidEntryPoint
 import app.rommdroid.data.repository.GamepadLayoutRepository
 import app.rommdroid.ui.RomMDroidNavHost
-import app.rommdroid.ui.components.GamepadAction
-import app.rommdroid.ui.components.GamepadDispatcher
-import app.rommdroid.ui.components.LocalGamepad
-import app.rommdroid.ui.components.LocalGamepadLayout
+import app.rommdroid.ui.gamepad.GamepadAction
+import app.rommdroid.ui.gamepad.GamepadDispatcher
+import app.rommdroid.ui.gamepad.LocalGamepad
+import app.rommdroid.ui.gamepad.LocalGamepadLayout
 import app.rommdroid.ui.theme.RomMDroidTheme
 import javax.inject.Inject
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 
 @AndroidEntryPoint
 class MainActivity : ComponentActivity() {
@@ -56,7 +56,7 @@ class MainActivity : ComponentActivity() {
         }
 
         setContent {
-            val layout by buttonLayout.layout.collectAsState()
+            val layout by buttonLayout.layout.collectAsStateWithLifecycle()
             RomMDroidTheme {
                 CompositionLocalProvider(
                     LocalGamepad       provides gamepad,

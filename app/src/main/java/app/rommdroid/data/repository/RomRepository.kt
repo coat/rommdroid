@@ -1,17 +1,20 @@
 package app.rommdroid.data.repository
 
+import androidx.room.withTransaction
 import app.rommdroid.data.api.RomMApi
 import app.rommdroid.data.api.model.CollectionSchema
-import app.rommdroid.data.api.model.DetailedRomSchema
+import app.rommdroid.data.api.model.PagedRomResponse
 import app.rommdroid.data.api.model.PlatformSchema
-import app.rommdroid.data.api.model.SimpleRomSchema
+import app.rommdroid.data.api.model.RomSchema
 import app.rommdroid.data.db.*
+import app.rommdroid.domain.RomDetail
+import app.rommdroid.domain.RomFile
+import app.rommdroid.domain.RomVariant
+import app.rommdroid.domain.artworkUrl
+import app.rommdroid.domain.regionsFor
+import app.rommdroid.domain.romGroupKey
 import app.rommdroid.util.decodeHtmlEntities
-import app.rommdroid.util.romGroupKey
-import app.rommdroid.util.romRegions
 import kotlinx.coroutines.flow.Flow
-import kotlinx.serialization.encodeToString
-import kotlinx.serialization.json.Json
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -19,15 +22,18 @@ import javax.inject.Singleton
 @Singleton
 class RomRepository @Inject constructor(
     private val api: RomMApi,
+    private val db: AppDatabase,
     private val platformDao: PlatformDao,
     private val romDao: RomDao,
     private val collectionDao: CollectionDao,
-    private val json: Json,
+    private val credentials: CredentialRepository,
 ) {
 
     // Platforms
 
     fun observePlatforms(): Flow<List<PlatformEntity>> = platformDao.observeAll()
+
+    suspend fun getPlatform(id: Int): PlatformEntity? = platformDao.getById(id)
 
     /**
      * Refresh the cached platform list. A full sync ([updatedAfter] null) also
@@ -53,7 +59,7 @@ class RomRepository @Inject constructor(
      * old server's metadata under the new server's platforms. Downloaded files,
      * folder mappings and the queue are untouched.
      */
-    suspend fun clearLibraryCache() {
+    suspend fun clearLibraryCache() = db.withTransaction {
         platformDao.deleteAll()
         romDao.deleteAll()
         collectionDao.deleteAll()
@@ -67,29 +73,16 @@ class RomRepository @Inject constructor(
     /**
      * Fetch every page of [platformId]'s ROMs, then write. A full refresh
      * ([updatedAfter] null) replaces the platform's rows.
-     *
-     * Collecting all pages first costs peak memory on the order of the
-     * platform's size, and buys not emptying the cache when a handheld goes out
-     * of range mid-sync.
      */
     suspend fun syncRoms(platformId: Int, updatedAfter: String? = null) {
-        val fetched = mutableListOf<RomEntity>()
-        var offset = 0
-        val pageSize = 100
-        do {
-            val page = api.getRoms(
-                platformIds = platformId,
-                limit       = pageSize,
-                offset      = offset,
-                withCharIndex    = false,
-                withRomIdIndex   = false,
-                withFilterValues = false,
-                updatedAfter     = updatedAfter,
+        val fetched = fetchAllRoms { limit, offset ->
+            api.getRoms(
+                platformIds  = platformId,
+                limit        = limit,
+                offset       = offset,
+                updatedAfter = updatedAfter,
             )
-            fetched += page.items.map { it.toEntity() }
-            offset += pageSize
-        } while (offset < page.total)
-
+        }
         if (updatedAfter == null) {
             romDao.replacePlatform(platformId, fetched)
         } else {
@@ -97,12 +90,7 @@ class RomRepository @Inject constructor(
         }
     }
 
-    suspend fun getRomDetail(id: Int): DetailedRomSchema = api.getRom(id).run {
-        copy(
-            name    = name?.decodeHtmlEntities(),
-            summary = summary?.decodeHtmlEntities(),
-        )
-    }
+    suspend fun getRomDetail(id: Int): RomDetail = api.getRom(id).toDetail()
 
     /**
      * Search the whole library on the server. Not a Room query: the cache holds
@@ -110,13 +98,7 @@ class RomRepository @Inject constructor(
      * a fraction of the hits. Callers fall back to [searchLocal] when this throws.
      */
     suspend fun searchRemote(query: String, limit: Int = 100): List<RomEntity> =
-        api.getRoms(
-            searchTerm = query,
-            limit      = limit,
-            withCharIndex    = false,
-            withRomIdIndex   = false,
-            withFilterValues = false,
-        ).items.map { it.toEntity() }
+        api.getRoms(searchTerm = query, limit = limit).items.map { it.toEntity() }
 
     /** Offline fallback - only covers platforms that have been synced. */
     suspend fun searchLocal(query: String): List<RomEntity> = romDao.search(query)
@@ -148,32 +130,37 @@ class RomRepository @Inject constructor(
     }
 
     /**
-     * Fetch one collection's ROMs, paging as [syncRoms] does. The ROM rows are
-     * upserted rather than swapped, since they belong to their platforms; only
-     * the membership is replaced.
+     * Fetch one collection's ROMs. The ROM rows are upserted rather than
+     * swapped, since they belong to their platforms; only the membership is
+     * replaced.
      */
     suspend fun syncCollectionRoms(collectionId: Int) {
-        val fetched = mutableListOf<RomEntity>()
-        var offset = 0
-        val pageSize = 100
-        do {
-            val page = api.getRoms(
-                collectionId     = collectionId,
-                limit            = pageSize,
-                offset           = offset,
-                withCharIndex    = false,
-                withRomIdIndex   = false,
-                withFilterValues = false,
-            )
-            fetched += page.items.map { it.toEntity() }
-            offset += pageSize
-        } while (offset < page.total)
-
+        val fetched = fetchAllRoms { limit, offset ->
+            api.getRoms(collectionId = collectionId, limit = limit, offset = offset)
+        }
         romDao.upsertAll(fetched)
         collectionDao.replaceMembership(
             collectionId = collectionId,
             rows         = fetched.map { CollectionRomEntity(collectionId, it.id) },
         )
+    }
+
+    /**
+     * Every page of one ROM listing, mapped. Collected before anything is
+     * written: peak memory on the order of the platform's size buys not
+     * emptying the cache when a handheld goes out of range mid-sync.
+     */
+    private suspend fun fetchAllRoms(
+        page: suspend (limit: Int, offset: Int) -> PagedRomResponse,
+    ): List<RomEntity> {
+        val fetched = mutableListOf<RomEntity>()
+        var offset = 0
+        do {
+            val response = page(PAGE_SIZE, offset)
+            fetched += response.items.map { it.toEntity() }
+            offset += PAGE_SIZE
+        } while (offset < response.total)
+        return fetched
     }
 
     // Regional variants
@@ -189,9 +176,24 @@ class RomRepository @Inject constructor(
     suspend fun getCachedRoms(ids: List<Int>): Map<Int, RomEntity> =
         if (ids.isEmpty()) emptyMap() else romDao.getByIds(ids).associateBy { it.id }
 
-    /** Decoded region codes for [rom], falling back to its filename tags. */
-    fun regionsOf(rom: RomEntity): List<String> =
-        romRegions(rom) { json.decodeFromString(it) }
+    /** Canonical region codes for [rom], falling back to its filename tags. */
+    fun regionsOf(rom: RomEntity): List<String> = regionsFor(rom.regions, rom.fsName)
+
+    // Artwork
+
+    /** Absolute cover URL for a list row, or null when the server has none. */
+    fun coverUrl(rom: RomEntity): String? =
+        artworkUrl(credentials.serverUrl, rom.pathCoverSmall, rom.pathCoverLarge, rom.urlCover)
+
+    fun coverUrl(platform: PlatformEntity): String? =
+        artworkUrl(credentials.serverUrl, platform.urlLogo)
+
+    fun coverUrl(collection: CollectionEntity): String? = artworkUrl(
+        credentials.serverUrl,
+        collection.pathCoverSmall,
+        collection.pathCoverLarge,
+        collection.urlCover,
+    )
 
     // Download URL construction
 
@@ -244,7 +246,42 @@ class RomRepository @Inject constructor(
         updatedAt      = updatedAt,
     )
 
-    private fun SimpleRomSchema.toEntity() = RomEntity(
+    private fun RomSchema.toDetail() = RomDetail(
+        id                  = id,
+        platformId          = platformId,
+        platformDisplayName = platformDisplayName,
+        name                = name?.decodeHtmlEntities(),
+        fsName              = fsName,
+        fsNameNoTags        = fsNameNoTags,
+        fsSizeBytes         = fsSizeBytes,
+        summary             = summary?.decodeHtmlEntities(),
+        regions             = regionsFor(regions, fsName),
+        // Large first: this is the one screen with room for it.
+        coverUrl            = artworkUrl(credentials.serverUrl, pathCoverLarge, pathCoverSmall, urlCover),
+        rating              = metadatum.averageRating,
+        // The API omits the list for single-file ROMs, so one is synthesised
+        // from the filesystem name; id 0 tells the queue to fetch it by name.
+        files               = files.map { RomFile(it.id, it.fileName, it.fileSizeBytes) }
+            .ifEmpty { listOf(RomFile(id = 0, fileName = fsName, sizeBytes = fsSizeBytes)) },
+        siblings            = siblingRoms.map { it.toSiblingVariant() },
+    )
+
+    /**
+     * A sibling as `sibling_roms` lists it. The server omits `fs_name`, so the
+     * label falls back through what it does send, `fs_name_no_ext` first
+     * because it still carries the "(Japan)" / "(Rev 1)" tag that tells copies
+     * apart. Size stays 0, meaning unknown.
+     */
+    private fun RomSchema.toSiblingVariant(): RomVariant {
+        val label = fsName
+            .ifBlank { fsNameNoExt }
+            .ifBlank { fsNameNoTags }
+            .ifBlank { name.orEmpty() }
+            .ifBlank { "ROM #$id" }
+        return RomVariant(id, label, fsSizeBytes, regionsFor(regions, label))
+    }
+
+    private fun RomSchema.toEntity() = RomEntity(
         id                    = id,
         platformId            = platformId,
         platformSlug          = platformSlug,
@@ -258,9 +295,9 @@ class RomRepository @Inject constructor(
         name                  = name?.decodeHtmlEntities(),
         slug                  = slug,
         summary               = summary?.decodeHtmlEntities(),
-        regions               = json.encodeToString(regions),
-        languages             = json.encodeToString(languages),
-        tags                  = json.encodeToString(tags),
+        regions               = regions,
+        languages             = languages,
+        tags                  = tags,
         urlCover              = urlCover,
         pathCoverSmall        = pathCoverSmall,
         pathCoverLarge        = pathCoverLarge,
@@ -270,4 +307,8 @@ class RomRepository @Inject constructor(
         createdAt             = createdAt.takeIf { it.isNotBlank() },
         groupKey              = romGroupKey(platformId, igdbId, slug, fsNameNoTags),
     )
+
+    private companion object {
+        const val PAGE_SIZE = 100
+    }
 }

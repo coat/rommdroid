@@ -1,7 +1,6 @@
 package app.rommdroid.data.api
 
 import app.rommdroid.data.api.model.*
-import retrofit2.Response
 import retrofit2.http.*
 
 /**
@@ -13,14 +12,6 @@ interface RomMApi {
 
     // Auth
 
-    /** Basic-auth login, returning a session cookie. Used only during setup. */
-    @FormUrlEncoded
-    @POST("api/login")
-    suspend fun login(
-        @Field("username") username: String,
-        @Field("password") password: String,
-    ): Response<Unit>
-
     /** Reachability plus version and capability info. */
     @GET("api/heartbeat")
     suspend fun heartbeat(): HeartbeatResponse
@@ -29,19 +20,11 @@ interface RomMApi {
     @GET("api/users/me")
     suspend fun getMe(): UserResponse
 
-    // Client API Tokens (device pairing)
+    // Client API tokens
 
-    /** Returns id and name; the token itself is delivered separately. */
+    /** Mints the token the app keeps; it arrives in `raw_token`, this once. */
     @POST("api/client-tokens")
     suspend fun createClientToken(@Body req: CreateTokenRequest): ClientTokenResponse
-
-    /** An 8-digit pairing code, valid for 5 minutes. */
-    @POST("api/client-tokens/{id}/pair")
-    suspend fun pairToken(@Path("id") id: Int): PairResponse
-
-    /** Exchange the pairing code for the actual token. */
-    @POST("api/client-tokens/exchange")
-    suspend fun exchangeToken(@Body req: ExchangeTokenRequest): ClientTokenResponse
 
     // Platforms
 
@@ -50,9 +33,6 @@ interface RomMApi {
     suspend fun getPlatforms(
         @Query("updated_after") updatedAfter: String? = null,
     ): List<PlatformSchema>
-
-    @GET("api/platforms/{id}")
-    suspend fun getPlatform(@Path("id") id: Int): PlatformSchema
 
     // Collections
 
@@ -91,15 +71,8 @@ interface RomMApi {
     ): PagedRomResponse
 
     @GET("api/roms/{id}")
-    suspend fun getRom(@Path("id") id: Int): DetailedRomSchema
+    suspend fun getRom(@Path("id") id: Int): RomSchema
 
     // Downloads go straight to DownloadWorker rather than through Retrofit, so
     // OkHttp can stream with progress callbacks. See RomRepository.romDownloadUrl.
-
-    // Firmware
-
-    @GET("api/firmware")
-    suspend fun getFirmware(
-        @Query("platform_id") platformId: Int,
-    ): List<FirmwareSchema>
 }

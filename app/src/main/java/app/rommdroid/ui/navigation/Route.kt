@@ -1,36 +1,33 @@
 package app.rommdroid.ui.navigation
 
-/** Sealed so the nav graph is exhaustive. */
-sealed class Route(val path: String) {
-    data object Setup : Route("setup")
+import kotlinx.serialization.Serializable
 
-    data object PlatformList  : Route("platforms")
-    data class  RomList(val platformId: Int = 0) : Route("platforms/{platformId}/roms") {
+/** Every destination, as the typed routes Navigation Compose 2.8 takes. A
+ *  ViewModel reads its arguments back with `savedStateHandle.toRoute<T>()`. */
+sealed interface Route {
+    @Serializable data object Setup : Route
+
+    @Serializable data object PlatformList : Route
+
+    /** One screen for a platform's ROMs and a collection's: only what it
+     *  lists, what a refresh fetches and which folders it checks differ. */
+    @Serializable data class RomList(val source: Source, val id: Int) : Route {
+        enum class Source { Platform, Collection }
+
         companion object {
-            const val TEMPLATE = "platforms/{platformId}/roms"
-            const val ARG = "platformId"
-            fun go(platformId: Int) = "platforms/$platformId/roms"
+            fun platform(id: Int) = RomList(Source.Platform, id)
+            fun collection(id: Int) = RomList(Source.Collection, id)
         }
     }
+
     /** Reached from the row pinned above the platforms: one flat list, then
      *  straight into the ROMs. */
-    data object CollectionList : Route("collections")
-    data class  CollectionRoms(val collectionId: Int = 0) : Route("collections/{collectionId}/roms") {
-        companion object {
-            const val TEMPLATE = "collections/{collectionId}/roms"
-            const val ARG = "collectionId"
-            fun go(collectionId: Int) = "collections/$collectionId/roms"
-        }
-    }
-    data class  RomDetail(val romId: Int = 0) : Route("roms/{romId}") {
-        companion object {
-            const val TEMPLATE = "roms/{romId}"
-            const val ARG = "romId"
-            fun go(romId: Int) = "roms/$romId"
-        }
-    }
-    data object Downloads     : Route("downloads")
-    data object Settings      : Route("settings")
-    data object FolderMapping : Route("settings/folders")
-    data object Search        : Route("search")
+    @Serializable data object CollectionList : Route
+
+    @Serializable data class RomDetail(val romId: Int) : Route
+
+    @Serializable data object Downloads : Route
+    @Serializable data object Settings : Route
+    @Serializable data object FolderMapping : Route
+    @Serializable data object Search : Route
 }

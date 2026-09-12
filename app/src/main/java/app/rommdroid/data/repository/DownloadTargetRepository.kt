@@ -10,6 +10,7 @@ import app.rommdroid.data.db.PlatformFolderEntity
 import app.rommdroid.data.db.PlatformSubfolderDao
 import app.rommdroid.data.db.PlatformSubfolderEntity
 import app.rommdroid.data.download.EsDePlatformFolders
+import app.rommdroid.data.download.LocalRomIndex
 import kotlinx.coroutines.flow.Flow
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -36,7 +37,8 @@ data class DownloadTarget(
  *  3. the base folder plus the ES-DE convention name
  *
  * Null only when nothing is configured. Every write goes through here so none
- * can skip the [FolderMappingBackup] mirror.
+ * can skip the [FolderMappingBackup] mirror, or leave [LocalRomIndex] reading
+ * the folder a platform no longer points at.
  */
 @Singleton
 class DownloadTargetRepository @Inject constructor(
@@ -44,6 +46,7 @@ class DownloadTargetRepository @Inject constructor(
     private val platformFolderDao: PlatformFolderDao,
     private val subfolderDao: PlatformSubfolderDao,
     private val backup: FolderMappingBackup,
+    private val localRoms: LocalRomIndex,
 ) {
 
     // The configured mappings
@@ -123,6 +126,7 @@ class DownloadTargetRepository @Inject constructor(
     /** Copies the mappings beyond a database rebuild's reach. Written whole:
      *  three small tables, only on a folder change, and it cannot drift. */
     private suspend fun mirror() {
+        localRoms.invalidate()
         val base = baseFolderDao.get()
         backup.save(
             FolderMappingSnapshot(

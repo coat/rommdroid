@@ -97,8 +97,7 @@ private fun Exception.describe(): String {
     if (this !is HttpException) return fallback
     val body = response()?.errorBody()?.string().orEmpty()
     val detail = runCatching {
-        Json { ignoreUnknownKeys = true }
-            .parseToJsonElement(body)
+        Json.parseToJsonElement(body)
             .jsonObject["detail"]
             ?.let { if (it is JsonPrimitive) it.content else it.toString() }
     }.getOrNull()

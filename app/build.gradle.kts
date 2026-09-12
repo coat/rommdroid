@@ -1,3 +1,4 @@
+import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 import java.util.Properties
 
 plugins {
@@ -14,6 +15,20 @@ plugins {
 val buildNumber = (System.getenv("BUILD_NUMBER")
     ?: providers.gradleProperty("buildNumber").orNull)
     ?.toIntOrNull() ?: 1
+
+kotlin {
+    compilerOptions {
+        jvmTarget.set(JvmTarget.JVM_21)
+        // Project-wide: every screen uses Material3's experimental top bars and
+        // every ViewModel flatMapLatest/mapLatest, so per-site opt-ins would be
+        // noise.
+        optIn.addAll(
+            "androidx.compose.material3.ExperimentalMaterial3Api",
+            "kotlinx.coroutines.ExperimentalCoroutinesApi",
+            "kotlinx.coroutines.FlowPreview",
+        )
+    }
+}
 
 android {
     namespace   = "app.rommdroid"
@@ -89,14 +104,6 @@ android {
         targetCompatibility = JavaVersion.VERSION_21
     }
 
-    kotlinOptions {
-        jvmTarget = "21"
-        freeCompilerArgs += listOf(
-            "-opt-in=androidx.compose.material3.ExperimentalMaterial3Api",
-            "-opt-in=kotlinx.coroutines.ExperimentalCoroutinesApi"
-        )
-    }
-
     buildFeatures {
         compose = true
         buildConfig = true
@@ -113,6 +120,7 @@ dependencies {
     // Core
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.lifecycle.runtime)
+    implementation(libs.androidx.lifecycle.runtime.compose)
     implementation(libs.androidx.lifecycle.viewmodel)
     implementation(libs.androidx.activity.compose)
 
@@ -144,10 +152,6 @@ dependencies {
 
     // WorkManager
     implementation(libs.work.runtime.ktx)
-
-    // DataStore + Security
-    implementation(libs.datastore.preferences)
-    implementation(libs.security.crypto)
 
     // Network
     implementation(libs.retrofit)
