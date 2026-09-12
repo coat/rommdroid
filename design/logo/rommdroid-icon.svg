@@ -1,6 +1,6 @@
 <!-- RomMDroid master logo.
      Single source of truth for every icon asset in the app.
-     Edit this, then run design/logo/generate-icons.py to regenerate
+     Edit this, then run design/logo/generate-icons.main.kts to regenerate
      the adaptive-icon vector drawables and the mipmap PNGs.
 
      data-role attributes are read by the generator:
