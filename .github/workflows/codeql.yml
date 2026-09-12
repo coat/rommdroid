@@ -1,7 +1,7 @@
 name: CodeQL
 
 # Replaces GitHub's default ("automatic") code scanning setup, which could only
-# ever analyze the Python icon script and the workflow files - 2% of the repo.
+# ever analyze the workflow files - < 2% of the repo.
 # Adding java-kotlin there fails: default setup runs autobuild with
 # `-Dorg.gradle.java.home` pinned to temurin-17, and this app compiles at Java
 # 21, so assemble dies on "invalid source release: 21" before a database
@@ -39,8 +39,6 @@ jobs:
         include:
           # Neither of these compiles, so CodeQL reads them straight off disk.
           - language: actions
-            build-mode: none
-          - language: python
             build-mode: none
           # Kotlin has no buildless extractor - `build-mode: none` for
           # java-kotlin covers Java source only, and this repo has none, so it
