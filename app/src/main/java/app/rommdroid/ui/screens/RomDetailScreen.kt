@@ -27,17 +27,11 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
-import app.rommdroid.data.api.model.RomSchema
-import app.rommdroid.data.api.model.RomFileSchema
 import app.rommdroid.data.db.DownloadStatus
-import app.rommdroid.data.db.PlatformDao
-import app.rommdroid.data.db.RomEntity
 import app.rommdroid.data.download.DownloadItem
 import app.rommdroid.data.download.DownloadQueue
 import app.rommdroid.data.download.FolderContents
 import app.rommdroid.data.download.LocalRomIndex
-import app.rommdroid.data.download.downloadableFiles
-import app.rommdroid.data.repository.CredentialRepository
 import app.rommdroid.data.repository.DownloadTarget
 import app.rommdroid.data.repository.DownloadTargetRepository
 import app.rommdroid.data.repository.RomRepository
@@ -57,13 +51,13 @@ import app.rommdroid.ui.components.TransferProgress
 import app.rommdroid.ui.components.focusOutline
 import app.rommdroid.ui.components.gamepadRow
 import app.rommdroid.ui.navigation.Route
-import app.rommdroid.util.RomVariant
-import app.rommdroid.util.artworkUrl
+import app.rommdroid.domain.RomDetail
+import app.rommdroid.domain.RomFile
+import app.rommdroid.domain.RomVariant
+import app.rommdroid.domain.regionPreference
+import app.rommdroid.domain.regionRank
+import app.rommdroid.domain.regionSummary
 import app.rommdroid.util.formatSize
-import app.rommdroid.util.regionPreference
-import app.rommdroid.util.regionRank
-import app.rommdroid.util.regionsFor
-import app.rommdroid.util.regionSummary
 import java.util.Locale
 import javax.inject.Inject
 
@@ -71,7 +65,7 @@ import javax.inject.Inject
 
 sealed interface RomDetailState {
     data object Loading : RomDetailState
-    data class  Loaded(val rom: RomSchema) : RomDetailState
+    data class  Loaded(val rom: RomDetail) : RomDetailState
     data class  Error(val message: String) : RomDetailState
 }
 
@@ -80,8 +74,6 @@ sealed interface RomDetailState {
 class RomDetailViewModel @Inject constructor(
     savedStateHandle: SavedStateHandle,
     private val repo: RomRepository,
-    private val credentials: CredentialRepository,
-    private val platformDao: PlatformDao,
     private val downloadTargets: DownloadTargetRepository,
     private val queue: DownloadQueue,
     private val localRoms: LocalRomIndex,
@@ -150,7 +142,7 @@ class RomDetailViewModel @Inject constructor(
             try {
                 val rom = repo.getRomDetail(id)
                 _state.value = RomDetailState.Loaded(rom)
-                _target.value = platformDao.getById(rom.platformId)
+                _target.value = repo.getPlatform(rom.platformId)
                     ?.let { downloadTargets.resolve(it) }
                 _variants.value = variantsOf(rom)
             } catch (e: CancellationException) {
@@ -166,19 +158,19 @@ class RomDetailViewModel @Inject constructor(
 
     /** The server's sibling list, falling back to the cache. That way round
      *  because a ROM reached from search may be from an unsynced platform. */
-    private suspend fun variantsOf(rom: RomSchema): List<RomVariant> {
+    private suspend fun variantsOf(rom: RomDetail): List<RomVariant> {
         val preference = regionPreference(Locale.getDefault().country)
         // `sibling_roms` is trimmed to ids and names, so a sibling rendered
         // straight from it is a blank row reading "0 B". The cache has the rest
         // whenever the sibling's platform has been synced.
-        val cached = repo.getCachedRoms(rom.siblingRoms.map { it.id })
+        val cached = repo.getCachedRoms(rom.siblings.map { it.id })
         val fromServer = buildList {
-            add(RomVariant(rom.id, rom.fsName, rom.fsSizeBytes, regionsFor(rom.regions, rom.fsName)))
-            rom.siblingRoms.forEach { sibling ->
+            add(RomVariant(rom.id, rom.fsName, rom.fsSizeBytes, rom.regions))
+            rom.siblings.forEach { sibling ->
                 val entity = cached[sibling.id]
                 add(
-                    if (entity != null) entity.toVariant(repo.regionsOf(entity))
-                    else sibling.toVariant()
+                    if (entity != null) RomVariant(entity.id, entity.fsName, entity.fsSizeBytes, repo.regionsOf(entity))
+                    else sibling
                 )
             }
         }
@@ -197,15 +189,8 @@ class RomDetailViewModel @Inject constructor(
             .sortedWith(compareBy({ regionRank(it.regions, preference) }, { it.fsName }))
     }
 
-    fun coverUrl(rom: RomSchema): String? = artworkUrl(
-        credentials.serverUrl,
-        rom.pathCoverLarge,
-        rom.pathCoverSmall,
-        rom.urlCover,
-    )
-
     /** Queue [file]; the queue itself reports what came of it. */
-    fun downloadFile(file: RomFileSchema) {
+    fun downloadFile(file: RomFile) {
         val rom = (_state.value as? RomDetailState.Loaded)?.rom ?: return
         requests.enqueue(rom, listOf(file))
     }
@@ -213,31 +198,12 @@ class RomDetailViewModel @Inject constructor(
     /** Queue every file of the ROM - the whole set for a multi-disc game. */
     fun downloadAll() {
         val rom = (_state.value as? RomDetailState.Loaded)?.rom ?: return
-        requests.enqueue(rom, rom.downloadableFiles())
+        requests.enqueue(rom, rom.files)
     }
 
     fun cancel(id: String) {
         viewModelScope.launch { queue.cancel(id) }
     }
-}
-
-/** A cached copy, which knows its own filename and size. */
-private fun RomEntity.toVariant(regions: List<String>) =
-    RomVariant(id, fsName, fsSizeBytes, regions)
-
-/**
- * A sibling the cache has never seen. The server omits `fs_name`, so the label
- * falls back through what it does send, `fs_name_no_ext` first because it still
- * carries the "(Japan)" / "(Rev 1)" tag that tells copies apart. Size stays 0,
- * meaning unknown, and the row omits it rather than lying.
- */
-private fun RomSchema.toVariant(): RomVariant {
-    val label = fsName
-        .ifBlank { fsNameNoExt }
-        .ifBlank { fsNameNoTags }
-        .ifBlank { name.orEmpty() }
-        .ifBlank { "ROM #$id" }
-    return RomVariant(id, label, fsSizeBytes, regionsFor(regions, label))
 }
 
 // Screen
@@ -246,7 +212,6 @@ private fun RomSchema.toVariant(): RomVariant {
 @Composable
 fun RomDetailScreen(
     viewModel: RomDetailViewModel,
-    romId: Int,
     onFolderSettings: () -> Unit,
     onBack: () -> Unit,
 ) {
@@ -331,8 +296,7 @@ fun RomDetailScreen(
                     ) {
                         // Cover art
                         item {
-                            val coverUrl = viewModel.coverUrl(rom)
-                            if (coverUrl != null) {
+                            rom.coverUrl?.let { coverUrl ->
                                 AsyncImage(
                                     model              = coverUrl,
                                     contentDescription = rom.name,
@@ -347,10 +311,7 @@ fun RomDetailScreen(
                         // Metadata
                         item {
                             Column(Modifier.padding(16.dp)) {
-                                Text(
-                                    rom.name ?: rom.fsNameNoTags,
-                                    style = MaterialTheme.typography.headlineSmall,
-                                )
+                                Text(rom.displayName, style = MaterialTheme.typography.headlineSmall)
                                 Spacer(Modifier.height(4.dp))
                                 Row(verticalAlignment = Alignment.CenterVertically) {
                                     Text(
@@ -358,7 +319,7 @@ fun RomDetailScreen(
                                         style = MaterialTheme.typography.labelLarge,
                                         color = MaterialTheme.colorScheme.primary,
                                     )
-                                    rom.metadatum.averageRating?.let { rating ->
+                                    rom.rating?.let { rating ->
                                         Spacer(Modifier.width(12.dp))
                                         RatingBadge(rating)
                                     }
@@ -454,9 +415,7 @@ fun RomDetailScreen(
                             item { HorizontalDivider(Modifier.padding(vertical = 8.dp)) }
                         }
 
-                        // Synthesised for single-file ROMs, which the API omits
-                        // the list for. See downloadableFiles().
-                        val files = rom.downloadableFiles()
+                        val files = rom.files
                         item {
                             Row(
                                 Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
@@ -544,7 +503,7 @@ private fun RomVariantRow(
  */
 @Composable
 private fun RomFileRow(
-    file: RomFileSchema,
+    file: RomFile,
     canDownload: Boolean,
     download: DownloadItem?,
     onDeviceBytes: Long?,
@@ -594,9 +553,9 @@ private fun RomFileRow(
                                 color = MaterialTheme.colorScheme.error,
                             )
                         download?.status == DownloadStatus.SUCCEEDED ->
-                            Text("Downloaded  -  ${file.fileSizeBytes.formatSize()}")
+                            Text("Downloaded  -  ${file.sizeBytes.formatSize()}")
                         download?.status == DownloadStatus.CANCELLED -> Text("Cancelled")
-                        else -> Text(file.fileSizeBytes.formatSize())
+                        else -> Text(file.sizeBytes.formatSize())
                     }
                 }
             },

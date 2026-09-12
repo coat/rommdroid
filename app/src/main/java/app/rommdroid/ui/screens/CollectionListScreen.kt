@@ -24,7 +24,6 @@ import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 import app.rommdroid.data.db.CollectionEntity
-import app.rommdroid.data.repository.CredentialRepository
 import app.rommdroid.data.repository.RomRepository
 import app.rommdroid.ui.common.SyncTracker
 import app.rommdroid.ui.components.BackButton
@@ -36,7 +35,6 @@ import app.rommdroid.ui.components.ListGamepadScrolling
 import app.rommdroid.ui.components.RestoreFocus
 import app.rommdroid.ui.components.focusOutline
 import app.rommdroid.ui.components.gamepadRow
-import app.rommdroid.util.artworkUrl
 import javax.inject.Inject
 
 // ViewModel
@@ -44,7 +42,6 @@ import javax.inject.Inject
 @HiltViewModel
 class CollectionListViewModel @Inject constructor(
     private val repo: RomRepository,
-    private val credentials: CredentialRepository,
 ) : ViewModel() {
 
     val collections: StateFlow<List<CollectionEntity>> =
@@ -63,12 +60,7 @@ class CollectionListViewModel @Inject constructor(
         viewModelScope.launch { sync.run { repo.syncCollections() } }
     }
 
-    fun coverUrl(collection: CollectionEntity): String? = artworkUrl(
-        credentials.serverUrl,
-        collection.pathCoverSmall,
-        collection.pathCoverLarge,
-        collection.urlCover,
-    )
+    fun coverUrl(collection: CollectionEntity): String? = repo.coverUrl(collection)
 }
 
 // Screen

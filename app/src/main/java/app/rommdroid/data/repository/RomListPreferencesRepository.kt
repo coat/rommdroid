@@ -1,8 +1,8 @@
 package app.rommdroid.data.repository
 
 import android.content.Context
-import app.rommdroid.util.RomSort
-import app.rommdroid.util.RomSortKey
+import app.rommdroid.domain.RomSort
+import app.rommdroid.domain.RomSortKey
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -27,7 +27,7 @@ class RomListPreferencesRepository @Inject constructor(
     private val _sort = MutableStateFlow(storedSort())
     val sort: StateFlow<RomSort> = _sort.asStateFlow()
 
-    /** Canonical region codes, or [app.rommdroid.util.NO_REGION]. Empty means
+    /** Canonical region codes, or [app.rommdroid.domain.NO_REGION]. Empty means
      *  no filter. */
     private val _regions = MutableStateFlow(storedRegions())
     val regions: StateFlow<Set<String>> = _regions.asStateFlow()

@@ -1,15 +1,20 @@
 package app.rommdroid.data.repository
 
+import androidx.room.withTransaction
 import app.rommdroid.data.api.RomMApi
 import app.rommdroid.data.api.model.CollectionSchema
 import app.rommdroid.data.api.model.PagedRomResponse
-import app.rommdroid.data.api.model.RomSchema
 import app.rommdroid.data.api.model.PlatformSchema
-import androidx.room.withTransaction
+import app.rommdroid.data.api.model.RomSchema
 import app.rommdroid.data.db.*
+import app.rommdroid.domain.RomDetail
+import app.rommdroid.domain.RomFile
+import app.rommdroid.domain.RomVariant
+import app.rommdroid.domain.artworkUrl
+import app.rommdroid.domain.regionsFor
+import app.rommdroid.domain.romGroupKey
+import app.rommdroid.domain.romRegions
 import app.rommdroid.util.decodeHtmlEntities
-import app.rommdroid.util.romGroupKey
-import app.rommdroid.util.romRegions
 import kotlinx.coroutines.flow.Flow
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
@@ -24,12 +29,15 @@ class RomRepository @Inject constructor(
     private val platformDao: PlatformDao,
     private val romDao: RomDao,
     private val collectionDao: CollectionDao,
+    private val credentials: CredentialRepository,
     private val json: Json,
 ) {
 
     // Platforms
 
     fun observePlatforms(): Flow<List<PlatformEntity>> = platformDao.observeAll()
+
+    suspend fun getPlatform(id: Int): PlatformEntity? = platformDao.getById(id)
 
     /**
      * Refresh the cached platform list. A full sync ([updatedAfter] null) also
@@ -86,12 +94,7 @@ class RomRepository @Inject constructor(
         }
     }
 
-    suspend fun getRomDetail(id: Int): RomSchema = api.getRom(id).run {
-        copy(
-            name    = name?.decodeHtmlEntities(),
-            summary = summary?.decodeHtmlEntities(),
-        )
-    }
+    suspend fun getRomDetail(id: Int): RomDetail = api.getRom(id).toDetail()
 
     /**
      * Search the whole library on the server. Not a Room query: the cache holds
@@ -181,6 +184,22 @@ class RomRepository @Inject constructor(
     fun regionsOf(rom: RomEntity): List<String> =
         romRegions(rom) { json.decodeFromString(it) }
 
+    // Artwork
+
+    /** Absolute cover URL for a list row, or null when the server has none. */
+    fun coverUrl(rom: RomEntity): String? =
+        artworkUrl(credentials.serverUrl, rom.pathCoverSmall, rom.pathCoverLarge, rom.urlCover)
+
+    fun coverUrl(platform: PlatformEntity): String? =
+        artworkUrl(credentials.serverUrl, platform.urlLogo)
+
+    fun coverUrl(collection: CollectionEntity): String? = artworkUrl(
+        credentials.serverUrl,
+        collection.pathCoverSmall,
+        collection.pathCoverLarge,
+        collection.urlCover,
+    )
+
     // Download URL construction
 
     /**
@@ -231,6 +250,41 @@ class RomRepository @Inject constructor(
         ownerUsername  = ownerUsername,
         updatedAt      = updatedAt,
     )
+
+    private fun RomSchema.toDetail() = RomDetail(
+        id                  = id,
+        platformId          = platformId,
+        platformDisplayName = platformDisplayName,
+        name                = name?.decodeHtmlEntities(),
+        fsName              = fsName,
+        fsNameNoTags        = fsNameNoTags,
+        fsSizeBytes         = fsSizeBytes,
+        summary             = summary?.decodeHtmlEntities(),
+        regions             = regionsFor(regions, fsName),
+        // Large first: this is the one screen with room for it.
+        coverUrl            = artworkUrl(credentials.serverUrl, pathCoverLarge, pathCoverSmall, urlCover),
+        rating              = metadatum.averageRating,
+        // The API omits the list for single-file ROMs, so one is synthesised
+        // from the filesystem name; id 0 tells the queue to fetch it by name.
+        files               = files.map { RomFile(it.id, it.fileName, it.fileSizeBytes) }
+            .ifEmpty { listOf(RomFile(id = 0, fileName = fsName, sizeBytes = fsSizeBytes)) },
+        siblings            = siblingRoms.map { it.toSiblingVariant() },
+    )
+
+    /**
+     * A sibling as `sibling_roms` lists it. The server omits `fs_name`, so the
+     * label falls back through what it does send, `fs_name_no_ext` first
+     * because it still carries the "(Japan)" / "(Rev 1)" tag that tells copies
+     * apart. Size stays 0, meaning unknown.
+     */
+    private fun RomSchema.toSiblingVariant(): RomVariant {
+        val label = fsName
+            .ifBlank { fsNameNoExt }
+            .ifBlank { fsNameNoTags }
+            .ifBlank { name.orEmpty() }
+            .ifBlank { "ROM #$id" }
+        return RomVariant(id, label, fsSizeBytes, regionsFor(regions, label))
+    }
 
     private fun RomSchema.toEntity() = RomEntity(
         id                    = id,

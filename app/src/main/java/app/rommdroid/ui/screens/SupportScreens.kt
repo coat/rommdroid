@@ -37,11 +37,10 @@ import app.rommdroid.data.db.PlatformEntity
 import app.rommdroid.data.db.DownloadStatus
 import app.rommdroid.data.download.DownloadItem
 import app.rommdroid.data.download.DownloadQueue
-import app.rommdroid.data.download.LocalRomIndex
 import app.rommdroid.data.repository.CredentialRepository
 import app.rommdroid.data.repository.DownloadTarget
 import app.rommdroid.data.repository.DownloadTargetRepository
-import app.rommdroid.data.repository.GamepadLayout
+import app.rommdroid.domain.GamepadLayout
 import app.rommdroid.data.repository.GamepadLayoutRepository
 import app.rommdroid.data.repository.RomRepository
 import app.rommdroid.data.repository.ServerConnector
@@ -64,11 +63,12 @@ import app.rommdroid.ui.components.gamepadRow
 import app.rommdroid.ui.components.rememberButtonLayout
 import app.rommdroid.ui.components.rememberHasGamepad
 import app.rommdroid.ui.components.rememberInputFieldHandle
-import app.rommdroid.util.RomGroup
+import app.rommdroid.domain.RomGroup
 import app.rommdroid.util.formatSize
-import app.rommdroid.util.groupRoms
-import app.rommdroid.util.regionPreference
-import app.rommdroid.util.regionSummary
+import app.rommdroid.util.safDisplayPath
+import app.rommdroid.domain.groupRoms
+import app.rommdroid.domain.regionPreference
+import app.rommdroid.domain.regionSummary
 import java.util.Locale
 import javax.inject.Inject
 
@@ -81,13 +81,16 @@ class SearchViewModel @Inject constructor(
     queue: DownloadQueue,
 ) : ViewModel() {
 
-    val query = MutableStateFlow("")
+    private val _query = MutableStateFlow("")
+    val query: StateFlow<String> = _query.asStateFlow()
+
+    fun setQuery(text: String) { _query.value = text }
 
     private val _offline = MutableStateFlow(false)
     /** True when the last search fell back to the (partial) local cache. */
     val offline: StateFlow<Boolean> = _offline.asStateFlow()
 
-    val results: StateFlow<List<RomGroup>> = query
+    val results: StateFlow<List<RomGroup>> = _query
         .debounce(300)
         .mapLatest { q ->
             if (q.length < 2) return@mapLatest emptyList()
@@ -183,7 +186,7 @@ fun SearchScreen(
                     // not for Search.
                     OutlinedInputField(
                         value         = query,
-                        onValueChange = { viewModel.query.value = it },
+                        onValueChange = viewModel::setQuery,
                         placeholder   = "Search ROMs...",
                         imeAction     = EditorInfo.IME_ACTION_SEARCH,
                         handle        = queryField,
@@ -940,7 +943,6 @@ data class PlatformFolderRow(
 class FolderMappingViewModel @Inject constructor(
     private val repo: RomRepository,
     private val targets: DownloadTargetRepository,
-    private val localRoms: LocalRomIndex,
 ) : ViewModel() {
 
     val baseFolder: StateFlow<BaseFolderEntity?> =
@@ -969,50 +971,21 @@ class FolderMappingViewModel @Inject constructor(
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
     fun setBaseFolder(uri: String, displayPath: String) {
-        viewModelScope.launch {
-            targets.setBaseFolder(uri, displayPath)
-            localRoms.invalidate()
-        }
+        viewModelScope.launch { targets.setBaseFolder(uri, displayPath) }
     }
 
     /** Point a single platform at a directory outside the base folder. */
     fun setPlatformFolder(platformId: Int, uri: String, displayPath: String) {
-        viewModelScope.launch {
-            targets.setPlatformFolder(platformId, uri, displayPath)
-            localRoms.invalidate()
-        }
+        viewModelScope.launch { targets.setPlatformFolder(platformId, uri, displayPath) }
     }
 
     fun renameSubfolder(platformId: Int, name: String) {
-        viewModelScope.launch {
-            targets.setSubfolder(platformId, name)
-            localRoms.invalidate()
-        }
+        viewModelScope.launch { targets.setSubfolder(platformId, name) }
     }
 
     /** Drop both kinds of override so the platform follows the ES-DE default again. */
     fun resetPlatform(platformId: Int) {
-        viewModelScope.launch {
-            targets.resetPlatform(platformId)
-            localRoms.invalidate()
-        }
-    }
-}
-
-/**
- * Human-readable path from a SAF tree URI. The decoded last segment looks like
- * "primary:Roms/SNES"; the volume prefix is stripped. Non-standard providers
- * (MTP, cloud) fall back to the full URI string.
- */
-fun safDisplayPath(uri: Uri): String {
-    return try {
-        val encoded = uri.lastPathSegment ?: return uri.toString()
-        val decoded = java.net.URLDecoder.decode(encoded, "UTF-8")
-        // "primary:Roms/SNES" -> "Roms/SNES"
-        // "0000-1111:Roms/SNES" -> "Roms/SNES" (SD card)
-        if (decoded.contains(':')) decoded.substringAfter(':') else decoded
-    } catch (_: Exception) {
-        uri.toString()
+        viewModelScope.launch { targets.resetPlatform(platformId) }
     }
 }
 

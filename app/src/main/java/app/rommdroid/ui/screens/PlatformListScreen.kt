@@ -20,7 +20,6 @@ import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 import app.rommdroid.data.db.PlatformEntity
-import app.rommdroid.data.repository.CredentialRepository
 import app.rommdroid.data.repository.RomRepository
 import app.rommdroid.ui.common.SyncTracker
 import app.rommdroid.ui.components.ConnectionError
@@ -33,7 +32,6 @@ import app.rommdroid.ui.components.ListGamepadScrolling
 import app.rommdroid.ui.components.RestoreFocus
 import app.rommdroid.ui.components.focusOutline
 import app.rommdroid.ui.components.gamepadRow
-import app.rommdroid.util.artworkUrl
 import javax.inject.Inject
 
 // ViewModel
@@ -41,7 +39,6 @@ import javax.inject.Inject
 @HiltViewModel
 class PlatformListViewModel @Inject constructor(
     private val repo: RomRepository,
-    private val credentials: CredentialRepository,
 ) : ViewModel() {
 
     val platforms: StateFlow<List<PlatformEntity>> =
@@ -74,10 +71,7 @@ class PlatformListViewModel @Inject constructor(
         }
     }
 
-    fun coverUrl(platform: PlatformEntity): String? = artworkUrl(
-        credentials.serverUrl,
-        platform.urlLogo,
-    )
+    fun coverUrl(platform: PlatformEntity): String? = repo.coverUrl(platform)
 }
 
 // Screen

@@ -1,4 +1,4 @@
-package app.rommdroid.util
+package app.rommdroid.domain
 
 import java.util.Locale
 

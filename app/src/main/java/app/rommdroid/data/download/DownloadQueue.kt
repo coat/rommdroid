@@ -6,15 +6,14 @@ import androidx.work.NetworkType
 import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.WorkInfo
 import androidx.work.WorkManager
-import app.rommdroid.data.api.model.RomSchema
-import app.rommdroid.data.api.model.RomFileSchema
 import app.rommdroid.data.db.DownloadDao
 import app.rommdroid.data.db.DownloadEntity
 import app.rommdroid.data.db.DownloadStatus
-import app.rommdroid.data.db.PlatformDao
 import app.rommdroid.data.repository.CredentialRepository
 import app.rommdroid.data.repository.DownloadTargetRepository
 import app.rommdroid.data.repository.RomRepository
+import app.rommdroid.domain.RomDetail
+import app.rommdroid.domain.RomFile
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
@@ -89,7 +88,6 @@ data class DownloadItem(
 class DownloadQueue @Inject constructor(
     private val repo: RomRepository,
     private val credentials: CredentialRepository,
-    private val platformDao: PlatformDao,
     private val targets: DownloadTargetRepository,
     private val downloads: DownloadDao,
     private val workManager: WorkManager,
@@ -133,17 +131,17 @@ class DownloadQueue @Inject constructor(
             android.util.Log.e(TAG, "Could not load ROM $romId to queue it", e)
             return EnqueueResult.Failed(e.message ?: "Could not reach the server")
         }
-        return enqueue(rom, rom.downloadableFiles())
+        return enqueue(rom, rom.files)
     }
 
     /** Queue [files] of an already-loaded [rom]. */
-    suspend fun enqueue(rom: RomSchema, files: List<RomFileSchema>): EnqueueResult {
+    suspend fun enqueue(rom: RomDetail, files: List<RomFile>): EnqueueResult {
         val serverUrl = credentials.serverUrl
             ?: return EnqueueResult.Failed("Not connected - set up your server in Settings")
-        val platform = platformDao.getById(rom.platformId)
+        val platform = repo.getPlatform(rom.platformId)
             ?: return EnqueueResult.Failed("Unknown platform - refresh the platform list")
         val target = targets.resolve(platform) ?: return EnqueueResult.NoFolder
-        val label = rom.name ?: rom.fsNameNoTags
+        val label = rom.displayName
 
         val queued = mutableListOf<String>()
         for (file in files) {
@@ -171,7 +169,7 @@ class DownloadQueue @Inject constructor(
                     romName         = label,
                     platformId      = rom.platformId,
                     platformName    = rom.platformDisplayName,
-                    sizeBytes       = file.fileSizeBytes,
+                    sizeBytes       = file.sizeBytes,
                     url             = url,
                     treeUri         = target.treeUri,
                     subfolder       = target.subfolder,
@@ -188,7 +186,7 @@ class DownloadQueue @Inject constructor(
                 fileName      = file.fileName,
                 romId         = rom.id,
                 fileId        = file.id,
-                expectedBytes = file.fileSizeBytes,
+                expectedBytes = file.sizeBytes,
                 treeUri       = target.treeUri,
                 subfolder     = target.subfolder,
             )
@@ -321,17 +319,3 @@ class DownloadQueue @Inject constructor(
         }
     }
 }
-
-/** The files to fetch. The API omits the list for single-file ROMs, so one is
- *  synthesised from the filesystem name. */
-fun RomSchema.downloadableFiles(): List<RomFileSchema> =
-    files.ifEmpty {
-        listOf(
-            RomFileSchema(
-                id            = 0,
-                romId         = id,
-                fileName      = fsName,
-                fileSizeBytes = fsSizeBytes,
-            )
-        )
-    }

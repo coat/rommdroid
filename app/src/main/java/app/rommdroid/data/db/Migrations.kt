@@ -34,7 +34,7 @@ val MIGRATION_1_2 = object : Migration(1, 2) {
  *
  * Backfilled rather than left at the default: an empty key matches every other
  * empty key, so every cached ROM would be a variant of every other. The backfill
- * reaches only the lower two tiers of [app.rommdroid.util.romGroupKey], since
+ * reaches only the lower two tiers of [app.rommdroid.domain.romGroupKey], since
  * the metadata id is not a column, so grouping shifts slightly on the next sync.
  */
 val MIGRATION_2_3 = object : Migration(2, 3) {

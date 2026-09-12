@@ -47,7 +47,7 @@ data class RomEntity(
     /** ISO-8601 stamp of when the server first saw the file. Kept as text: the
      *  server formats every stamp the same way, so text order is time order. */
     val createdAt: String? = null,
-    /** [app.rommdroid.util.romGroupKey]. Stored rather than computed on read so
+    /** [app.rommdroid.domain.romGroupKey]. Stored rather than computed on read so
      *  siblings resolve to an indexed query. */
     val groupKey: String = "",
 )

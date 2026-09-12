@@ -113,11 +113,9 @@ fun RomMDroidNavHost() {
         composable(
             route     = Route.RomDetail.TEMPLATE,
             arguments = listOf(navArgument(Route.RomDetail.ARG) { type = NavType.IntType }),
-        ) { backStack ->
-            val romId = backStack.arguments?.getInt(Route.RomDetail.ARG) ?: return@composable
+        ) {
             RomDetailScreen(
                 viewModel        = hiltViewModel(),
-                romId            = romId,
                 onFolderSettings = { navController.navigate(Route.FolderMapping.path) },
                 onBack           = { navController.popBackStack() },
             )

@@ -43,12 +43,10 @@ import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 import app.rommdroid.data.db.DownloadStatus
-import app.rommdroid.data.db.PlatformDao
 import app.rommdroid.data.db.RomEntity
 import app.rommdroid.data.download.DownloadQueue
 import app.rommdroid.data.download.FolderContents
 import app.rommdroid.data.download.LocalRomIndex
-import app.rommdroid.data.repository.CredentialRepository
 import app.rommdroid.data.repository.DownloadTargetRepository
 import app.rommdroid.data.repository.RomListPreferencesRepository
 import app.rommdroid.data.repository.RomRepository
@@ -72,25 +70,24 @@ import app.rommdroid.ui.components.rememberButtonLayout
 import app.rommdroid.ui.components.rememberInputFieldHandle
 import app.rommdroid.ui.components.withButton
 import app.rommdroid.ui.navigation.Route
-import app.rommdroid.util.NO_REGION
-import app.rommdroid.util.RegionCount
-import app.rommdroid.util.RomGroup
-import app.rommdroid.util.RomSection
-import app.rommdroid.util.RomSort
-import app.rommdroid.util.RomSortKey
-import app.rommdroid.util.countRegions
-import app.rommdroid.util.keepRegions
-import app.rommdroid.util.regionFlag
-import app.rommdroid.util.regionName
-import app.rommdroid.util.sortGroups
-import app.rommdroid.util.artworkUrl
-import app.rommdroid.util.displayName
+import app.rommdroid.domain.NO_REGION
+import app.rommdroid.domain.RegionCount
+import app.rommdroid.domain.RomGroup
+import app.rommdroid.domain.RomSection
+import app.rommdroid.domain.RomSort
+import app.rommdroid.domain.RomSortKey
+import app.rommdroid.domain.countRegions
+import app.rommdroid.domain.keepRegions
+import app.rommdroid.domain.regionFlag
+import app.rommdroid.domain.regionName
+import app.rommdroid.domain.sortGroups
+import app.rommdroid.domain.displayName
 import app.rommdroid.util.formatSize
-import app.rommdroid.util.groupRoms
-import app.rommdroid.util.regionPreference
-import app.rommdroid.util.regionSummary
-import app.rommdroid.util.sectionIndexOf
-import app.rommdroid.util.sectionsOf
+import app.rommdroid.domain.groupRoms
+import app.rommdroid.domain.regionPreference
+import app.rommdroid.domain.regionSummary
+import app.rommdroid.domain.sectionIndexOf
+import app.rommdroid.domain.sectionsOf
 import kotlinx.coroutines.Dispatchers
 import java.util.Locale
 import javax.inject.Inject
@@ -102,9 +99,7 @@ import javax.inject.Inject
 class RomListViewModel @Inject constructor(
     savedStateHandle: SavedStateHandle,
     private val repo: RomRepository,
-    private val credentials: CredentialRepository,
     queue: DownloadQueue,
-    private val platformDao: PlatformDao,
     private val downloadTargets: DownloadTargetRepository,
     private val localRoms: LocalRomIndex,
     private val listPrefs: RomListPreferencesRepository,
@@ -222,7 +217,7 @@ class RomListViewModel @Inject constructor(
             .distinctUntilChanged()
             .mapLatest { platformIds ->
                 platformIds.mapNotNull { id ->
-                    val platform = platformDao.getById(id) ?: return@mapNotNull null
+                    val platform = repo.getPlatform(id) ?: return@mapNotNull null
                     val target   = downloadTargets.resolve(platform) ?: return@mapNotNull null
                     id to localRoms.listing(target)
                 }.toMap()
@@ -233,7 +228,7 @@ class RomListViewModel @Inject constructor(
      *  collection is two levels down and nothing else names it. */
     val title: StateFlow<String> = flow {
         val name = when (source) {
-            is Source.Platform   -> platformDao.getById(source.id)?.displayName
+            is Source.Platform   -> repo.getPlatform(source.id)?.displayName
             is Source.Collection -> repo.getCollection(source.id)?.name
         }
         emit(name ?: "ROMs")
@@ -260,12 +255,7 @@ class RomListViewModel @Inject constructor(
         }
     }
 
-    fun coverUrl(rom: RomEntity): String? = artworkUrl(
-        credentials.serverUrl,
-        rom.pathCoverSmall,
-        rom.pathCoverLarge,
-        rom.urlCover,
-    )
+    fun coverUrl(rom: RomEntity): String? = repo.coverUrl(rom)
 }
 
 // Screen

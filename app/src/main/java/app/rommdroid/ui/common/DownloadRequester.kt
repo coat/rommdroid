@@ -1,13 +1,13 @@
 package app.rommdroid.ui.common
 
-import app.rommdroid.data.api.model.RomFileSchema
-import app.rommdroid.data.api.model.RomSchema
 import app.rommdroid.data.db.RomEntity
 import app.rommdroid.data.download.DownloadQueue
 import app.rommdroid.data.download.QueueMessage
 import app.rommdroid.data.download.asMessage
-import app.rommdroid.util.RomGroup
-import app.rommdroid.util.regionSummary
+import app.rommdroid.domain.RomDetail
+import app.rommdroid.domain.RomFile
+import app.rommdroid.domain.RomGroup
+import app.rommdroid.domain.regionSummary
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -51,7 +51,7 @@ class DownloadRequester(
     }
 
     /** Queue [files] of an already-loaded [rom]. */
-    fun enqueue(rom: RomSchema, files: List<RomFileSchema>) {
+    fun enqueue(rom: RomDetail, files: List<RomFile>) {
         scope.launch { _messages.emit(queue.enqueue(rom, files).asMessage()) }
     }
 
