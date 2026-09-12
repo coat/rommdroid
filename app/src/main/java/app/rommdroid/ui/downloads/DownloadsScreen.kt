@@ -26,15 +26,15 @@ import app.rommdroid.ui.gamepad.rememberButtonLayout
 import app.rommdroid.ui.components.TransferProgress
 import app.rommdroid.util.formatSize
 import kotlinx.coroutines.flow.*
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun DownloadsScreen(
     viewModel: DownloadsViewModel,
     onRomClick: (Int) -> Unit,
     onBack: () -> Unit,
 ) {
-    val items by viewModel.items.collectAsState()
+    val items by viewModel.items.collectAsStateWithLifecycle()
     val (active, finished) = items.partition { !it.status.isFinished }
 
     val listState = rememberLazyListState()

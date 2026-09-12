@@ -84,9 +84,9 @@ class RomGroupingTest {
             name = name,
             slug = slug,
             summary = null,
-            regions = regions.joinToString(","),
-            languages = "",
-            tags = "",
+            regions = regions,
+            languages = emptyList(),
+            tags = emptyList(),
             urlCover = null,
             pathCoverSmall = null,
             pathCoverLarge = null,
@@ -96,7 +96,7 @@ class RomGroupingTest {
     }
 
     private val regionsOf: (RomEntity) -> List<String> = { entity ->
-        romRegions(entity) { raw -> raw.split(',').filter { it.isNotBlank() } }
+        regionsFor(entity.regions, entity.fsName)
     }
 
     @Test fun `metadata id groups variants whose filenames differ`() {

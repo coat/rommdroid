@@ -30,21 +30,21 @@ import app.rommdroid.ui.components.RatingBadge
 import app.rommdroid.ui.gamepad.RestoreFocus
 import coil3.compose.AsyncImage
 import kotlinx.coroutines.flow.*
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun RomDetailScreen(
     viewModel: RomDetailViewModel,
     onFolderSettings: () -> Unit,
     onBack: () -> Unit,
 ) {
-    val state          by viewModel.state.collectAsState()
-    val target         by viewModel.target.collectAsState()
-    val downloads      by viewModel.downloads.collectAsState()
-    val variants       by viewModel.variants.collectAsState()
-    val selectedRomId  by viewModel.romId.collectAsState()
-    val refreshing     by viewModel.refreshing.collectAsState()
-    val onDevice       by viewModel.onDevice.collectAsState()
+    val state          by viewModel.state.collectAsStateWithLifecycle()
+    val target         by viewModel.target.collectAsStateWithLifecycle()
+    val downloads      by viewModel.downloads.collectAsStateWithLifecycle()
+    val variants       by viewModel.variants.collectAsStateWithLifecycle()
+    val selectedRomId  by viewModel.romId.collectAsStateWithLifecycle()
+    val refreshing     by viewModel.refreshing.collectAsStateWithLifecycle()
+    val onDevice       by viewModel.onDevice.collectAsStateWithLifecycle()
 
     val snackbarHostState = remember { SnackbarHostState() }
 

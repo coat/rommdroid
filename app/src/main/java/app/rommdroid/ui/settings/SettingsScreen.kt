@@ -30,8 +30,8 @@ import app.rommdroid.ui.components.OutlinedInputField
 import app.rommdroid.ui.gamepad.rememberHasGamepad
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SettingsScreen(
     viewModel: SettingsViewModel,
@@ -39,11 +39,11 @@ fun SettingsScreen(
     onResetSetup: () -> Unit,
     onBack: () -> Unit,
 ) {
-    val state by viewModel.state.collectAsState()
-    val canSaveUnverified by viewModel.canSaveUnverified.collectAsState()
-    val savedServerUrl by viewModel.savedServerUrl.collectAsState()
-    val savedUsername by viewModel.savedUsername.collectAsState()
-    val gamepadLayout by viewModel.gamepadLayout.collectAsState()
+    val state by viewModel.state.collectAsStateWithLifecycle()
+    val canSaveUnverified by viewModel.canSaveUnverified.collectAsStateWithLifecycle()
+    val savedServerUrl by viewModel.savedServerUrl.collectAsStateWithLifecycle()
+    val savedUsername by viewModel.savedUsername.collectAsStateWithLifecycle()
+    val gamepadLayout by viewModel.gamepadLayout.collectAsStateWithLifecycle()
 
     var serverUrl by rememberSaveable { mutableStateOf(savedServerUrl) }
     var username  by rememberSaveable { mutableStateOf(savedUsername) }

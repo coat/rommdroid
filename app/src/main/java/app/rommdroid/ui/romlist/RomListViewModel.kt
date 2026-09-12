@@ -7,6 +7,7 @@ import androidx.compose.runtime.*
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import androidx.navigation.toRoute
 import app.rommdroid.data.db.DownloadStatus
 import app.rommdroid.data.db.RomEntity
 import app.rommdroid.data.download.DownloadQueue
@@ -37,7 +38,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 
-@OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
 @HiltViewModel
 class RomListViewModel @Inject constructor(
     savedStateHandle: SavedStateHandle,
@@ -56,9 +56,12 @@ class RomListViewModel @Inject constructor(
         data class Collection(val id: Int) : Source
     }
 
-    private val source: Source =
-        savedStateHandle.get<Int>(Route.RomList.ARG)?.let(Source::Platform)
-            ?: Source.Collection(checkNotNull(savedStateHandle[Route.CollectionRoms.ARG]))
+    private val source: Source = savedStateHandle.toRoute<Route.RomList>().let { route ->
+        when (route.source) {
+            Route.RomList.Source.Platform   -> Source.Platform(route.id)
+            Route.RomList.Source.Collection -> Source.Collection(route.id)
+        }
+    }
 
     private val roms: Flow<List<RomEntity>> =
         when (source) {

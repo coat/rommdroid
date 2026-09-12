@@ -29,17 +29,17 @@ import app.rommdroid.ui.gamepad.ListGamepadScrolling
 import app.rommdroid.ui.gamepad.RestoreFocus
 import coil3.compose.AsyncImage
 import kotlinx.coroutines.flow.*
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun CollectionListScreen(
     viewModel: CollectionListViewModel,
     onCollectionClick: (Int) -> Unit,
     onBack: () -> Unit,
 ) {
-    val collections by viewModel.collections.collectAsState()
-    val syncing     by viewModel.sync.syncing.collectAsState()
-    val error       by viewModel.sync.error.collectAsState()
+    val collections by viewModel.collections.collectAsStateWithLifecycle()
+    val syncing     by viewModel.sync.syncing.collectAsStateWithLifecycle()
+    val error       by viewModel.sync.error.collectAsStateWithLifecycle()
 
     val listState = rememberLazyListState()
 

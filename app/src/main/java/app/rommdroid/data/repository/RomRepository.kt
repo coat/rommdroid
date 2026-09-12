@@ -13,11 +13,8 @@ import app.rommdroid.domain.RomVariant
 import app.rommdroid.domain.artworkUrl
 import app.rommdroid.domain.regionsFor
 import app.rommdroid.domain.romGroupKey
-import app.rommdroid.domain.romRegions
 import app.rommdroid.util.decodeHtmlEntities
 import kotlinx.coroutines.flow.Flow
-import kotlinx.serialization.encodeToString
-import kotlinx.serialization.json.Json
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -30,7 +27,6 @@ class RomRepository @Inject constructor(
     private val romDao: RomDao,
     private val collectionDao: CollectionDao,
     private val credentials: CredentialRepository,
-    private val json: Json,
 ) {
 
     // Platforms
@@ -180,9 +176,8 @@ class RomRepository @Inject constructor(
     suspend fun getCachedRoms(ids: List<Int>): Map<Int, RomEntity> =
         if (ids.isEmpty()) emptyMap() else romDao.getByIds(ids).associateBy { it.id }
 
-    /** Decoded region codes for [rom], falling back to its filename tags. */
-    fun regionsOf(rom: RomEntity): List<String> =
-        romRegions(rom) { json.decodeFromString(it) }
+    /** Canonical region codes for [rom], falling back to its filename tags. */
+    fun regionsOf(rom: RomEntity): List<String> = regionsFor(rom.regions, rom.fsName)
 
     // Artwork
 
@@ -300,9 +295,9 @@ class RomRepository @Inject constructor(
         name                  = name?.decodeHtmlEntities(),
         slug                  = slug,
         summary               = summary?.decodeHtmlEntities(),
-        regions               = json.encodeToString(regions),
-        languages             = json.encodeToString(languages),
-        tags                  = json.encodeToString(tags),
+        regions               = regions,
+        languages             = languages,
+        tags                  = tags,
         urlCover              = urlCover,
         pathCoverSmall        = pathCoverSmall,
         pathCoverLarge        = pathCoverLarge,

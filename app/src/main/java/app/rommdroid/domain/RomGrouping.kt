@@ -132,9 +132,3 @@ fun regionsFor(recorded: List<String>, fsName: String): List<String> =
         .map(::normalizeRegion)
         .filter { it.isNotEmpty() }
         .distinct()
-
-/** [regionsFor] over a cached row, whose regions are a JSON-encoded list. */
-fun romRegions(rom: RomEntity, decodeJsonList: (String) -> List<String>): List<String> {
-    val stored = runCatching { decodeJsonList(rom.regions) }.getOrDefault(emptyList())
-    return regionsFor(stored, rom.fsName)
-}

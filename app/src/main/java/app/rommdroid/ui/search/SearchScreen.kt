@@ -28,8 +28,9 @@ import app.rommdroid.ui.gamepad.ListGamepadScrolling
 import app.rommdroid.ui.components.OutlinedInputField
 import app.rommdroid.ui.components.rememberInputFieldHandle
 import kotlinx.coroutines.flow.*
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 
-@OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun SearchScreen(
     viewModel: SearchViewModel,
@@ -37,10 +38,10 @@ fun SearchScreen(
     onFolderSettings: () -> Unit,
     onBack: () -> Unit,
 ) {
-    val query    by viewModel.query.collectAsState()
-    val results  by viewModel.results.collectAsState()
-    val offline  by viewModel.offline.collectAsState()
-    val queueing by viewModel.downloads.queueing.collectAsState()
+    val query    by viewModel.query.collectAsStateWithLifecycle()
+    val results  by viewModel.results.collectAsStateWithLifecycle()
+    val offline  by viewModel.offline.collectAsStateWithLifecycle()
+    val queueing by viewModel.downloads.queueing.collectAsStateWithLifecycle()
 
     val snackbarHostState = remember { SnackbarHostState() }
     val haptics = LocalHapticFeedback.current

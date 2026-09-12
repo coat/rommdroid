@@ -1,61 +1,49 @@
 package app.rommdroid.data.repository
 
 import android.content.Context
-import android.content.SharedPreferences
 import android.util.Base64
 import androidx.core.content.edit
-import androidx.security.crypto.EncryptedSharedPreferences
-import androidx.security.crypto.MasterKey
+import app.rommdroid.data.security.KeystoreCipher
 import dagger.hilt.android.qualifiers.ApplicationContext
+import java.util.concurrent.ConcurrentHashMap
 import javax.inject.Inject
 import javax.inject.Singleton
 
-/** Credentials in Keystore-backed EncryptedSharedPreferences. Writes are
- *  synchronous; the values are tiny. */
+/**
+ * Credentials in a private preferences file, each value sealed by
+ * [KeystoreCipher]. Writes are synchronous; the values are tiny. Reads are
+ * cached: the interceptors ask for the URL and token on every request, and a
+ * Keystore round trip per request is not free.
+ */
 @Singleton
 class CredentialRepository @Inject constructor(
     @ApplicationContext context: Context,
 ) {
-    private val masterKey = MasterKey.Builder(context)
-        .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
-        .build()
-
-    private val prefs = EncryptedSharedPreferences.create(
-        context,
-        "rommdroid_credentials",
-        masterKey,
-        EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
-        EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM,
-    )
-
-    companion object {
-        private const val KEY_SERVER_URL = "server_url"
-        private const val KEY_API_TOKEN  = "api_token"
-        private const val KEY_USERNAME   = "username"
-        private const val KEY_PASSWORD   = "password"   // only kept during token setup
-    }
+    private val prefs = context.getSharedPreferences(PREFS_FILE, Context.MODE_PRIVATE)
+    private val cipher = KeystoreCipher(KEY_ALIAS)
+    private val cache = ConcurrentHashMap<String, String>()
 
     // Server URL
 
     var serverUrl: String?
-        get() = prefs.getString(KEY_SERVER_URL, null)
-        set(value) = prefs.put(KEY_SERVER_URL, value)
+        get() = get(KEY_SERVER_URL)
+        set(value) = put(KEY_SERVER_URL, value)
 
     // Client API token, preferred over Basic auth
 
     var apiToken: String?
-        get() = prefs.getString(KEY_API_TOKEN, null)
-        set(value) = prefs.put(KEY_API_TOKEN, value)
+        get() = get(KEY_API_TOKEN)
+        set(value) = put(KEY_API_TOKEN, value)
 
     // Basic auth, used only for the initial token exchange
 
     var username: String?
-        get() = prefs.getString(KEY_USERNAME, null)
-        set(value) = prefs.put(KEY_USERNAME, value)
+        get() = get(KEY_USERNAME)
+        set(value) = put(KEY_USERNAME, value)
 
     private var password: String?
-        get() = prefs.getString(KEY_PASSWORD, null)
-        set(value) = prefs.put(KEY_PASSWORD, value)
+        get() = get(KEY_PASSWORD)
+        set(value) = put(KEY_PASSWORD, value)
 
     fun setBasicCredentials(user: String, pass: String) {
         username = user
@@ -100,15 +88,37 @@ class CredentialRepository @Inject constructor(
     /** Wipes every stored credential, for "Disconnect / Change server".
      *  Downloaded files and folder mappings are unaffected. */
     fun clearAll() {
+        cache.clear()
         prefs.edit { clear() }
     }
 
     /** True once there is enough stored to make API calls. */
     val isConfigured: Boolean
         get() = !serverUrl.isNullOrBlank() && (apiToken != null || basicAuthHeader != null)
-}
 
-/** Null removes the key, so an unset value never lingers as an empty string. */
-private fun SharedPreferences.put(key: String, value: String?) = edit {
-    if (value == null) remove(key) else putString(key, value)
+    // Storage
+
+    private fun get(key: String): String? {
+        cache[key]?.let { return it }
+        val value = prefs.getString(key, null)?.let(cipher::decrypt) ?: return null
+        cache[key] = value
+        return value
+    }
+
+    /** Null removes the key, so an unset value never lingers as an empty string. */
+    private fun put(key: String, value: String?) {
+        if (value == null) cache.remove(key) else cache[key] = value
+        prefs.edit {
+            if (value == null) remove(key) else putString(key, cipher.encrypt(value))
+        }
+    }
+
+    private companion object {
+        const val PREFS_FILE     = "rommdroid_secrets"
+        const val KEY_ALIAS      = "rommdroid_credentials"
+        const val KEY_SERVER_URL = "server_url"
+        const val KEY_API_TOKEN  = "api_token"
+        const val KEY_USERNAME   = "username"
+        const val KEY_PASSWORD   = "password"   // only kept during token setup
+    }
 }

@@ -47,8 +47,9 @@ import app.rommdroid.ui.components.rememberInputFieldHandle
 import app.rommdroid.ui.gamepad.RestoreFocus
 import app.rommdroid.ui.gamepad.withButton
 import kotlinx.coroutines.flow.*
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 
-@OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun RomListScreen(
     viewModel: RomListViewModel,
@@ -57,17 +58,17 @@ fun RomListScreen(
     onFolderSettings: () -> Unit,
     onBack: () -> Unit,
 ) {
-    val sections by viewModel.sections.collectAsState()
-    val title    by viewModel.title.collectAsState()
-    val filter   by viewModel.filter.collectAsState()
-    val syncing  by viewModel.sync.syncing.collectAsState()
-    val error    by viewModel.sync.error.collectAsState()
-    val statuses by viewModel.downloadStatus.collectAsState()
-    val queueing by viewModel.downloads.queueing.collectAsState()
-    val onDevice by viewModel.onDevice.collectAsState()
-    val sort     by viewModel.sort.collectAsState()
-    val regions  by viewModel.regions.collectAsState()
-    val regionFilter by viewModel.regionFilter.collectAsState()
+    val sections by viewModel.sections.collectAsStateWithLifecycle()
+    val title    by viewModel.title.collectAsStateWithLifecycle()
+    val filter   by viewModel.filter.collectAsStateWithLifecycle()
+    val syncing  by viewModel.sync.syncing.collectAsStateWithLifecycle()
+    val error    by viewModel.sync.error.collectAsStateWithLifecycle()
+    val statuses by viewModel.downloadStatus.collectAsStateWithLifecycle()
+    val queueing by viewModel.downloads.queueing.collectAsStateWithLifecycle()
+    val onDevice by viewModel.onDevice.collectAsStateWithLifecycle()
+    val sort     by viewModel.sort.collectAsStateWithLifecycle()
+    val regions  by viewModel.regions.collectAsStateWithLifecycle()
+    val regionFilter by viewModel.regionFilter.collectAsStateWithLifecycle()
 
     val snackbarHostState = remember { SnackbarHostState() }
     val haptics = LocalHapticFeedback.current

@@ -24,16 +24,16 @@ import app.rommdroid.ui.gamepad.ListGamepadScrolling
 import app.rommdroid.util.safDisplayPath
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun FolderMappingScreen(
     viewModel: FolderMappingViewModel,
     onBack: () -> Unit,
 ) {
     val context    = LocalContext.current
-    val rows       by viewModel.rows.collectAsState()
-    val baseFolder by viewModel.baseFolder.collectAsState()
+    val rows       by viewModel.rows.collectAsStateWithLifecycle()
+    val baseFolder by viewModel.baseFolder.collectAsStateWithLifecycle()
 
     // Which platform a picker result belongs to; -1 is the base folder itself.
     val pendingPlatformId = remember { mutableIntStateOf(-1) }

@@ -4,17 +4,16 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.navigation.NavController
-import androidx.navigation.NavType
+import androidx.navigation.NavDestination.Companion.hasRoute
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
-import androidx.navigation.navArgument
+import app.rommdroid.ui.collections.CollectionListScreen
+import app.rommdroid.ui.downloads.DownloadsScreen
 import app.rommdroid.ui.gamepad.GamepadAction
 import app.rommdroid.ui.gamepad.GamepadHandler
 import app.rommdroid.ui.navigation.Route
-import app.rommdroid.ui.collections.CollectionListScreen
-import app.rommdroid.ui.downloads.DownloadsScreen
 import app.rommdroid.ui.platforms.PlatformListScreen
 import app.rommdroid.ui.romdetail.RomDetailScreen
 import app.rommdroid.ui.romlist.RomListScreen
@@ -30,26 +29,24 @@ fun RomMDroidNavHost() {
     // Held above the NavHost so a configuration change cannot flip the start
     // destination after it has been decided.
     val startupViewModel: StartupViewModel = hiltViewModel()
-    val startDestination = if (startupViewModel.isConfigured) {
-        Route.PlatformList.path
-    } else {
-        Route.Setup.path
-    }
+    val startDestination: Route =
+        if (startupViewModel.isConfigured) Route.PlatformList else Route.Setup
 
     // Select and Start work from anywhere, under every screen's own bindings so
     // a screen can take them back. Not during setup, where neither page has
     // anything to say and the queue leads out of an unfinished sign-in.
-    val route by navController.currentBackStackEntryAsState()
-    fun openOnce(path: String): Boolean {
-        val current = route?.destination?.route
-        if (current == Route.Setup.path || current == path) return true
-        navController.navigate(path) { launchSingleTop = true }
+    val entry by navController.currentBackStackEntryAsState()
+    fun openOnce(route: Route): Boolean {
+        val current = entry?.destination
+        if (current?.hasRoute<Route.Setup>() == true) return true
+        if (current?.hasRoute(route::class) == true) return true
+        navController.navigate(route) { launchSingleTop = true }
         return true
     }
     GamepadHandler { action ->
         when (action) {
-            GamepadAction.Settings  -> openOnce(Route.Settings.path)
-            GamepadAction.Downloads -> openOnce(Route.Downloads.path)
+            GamepadAction.Settings  -> openOnce(Route.Settings)
+            GamepadAction.Downloads -> openOnce(Route.Downloads)
             else                    -> false
         }
     }
@@ -59,34 +56,29 @@ fun RomMDroidNavHost() {
         startDestination = startDestination,
     ) {
 
-        composable(Route.Setup.path) {
+        composable<Route.Setup> {
             SetupScreen(
                 viewModel  = hiltViewModel(),
                 onComplete = {
-                    navController.navigate(Route.PlatformList.path) {
-                        popUpTo(Route.Setup.path) { inclusive = true }
+                    navController.navigate(Route.PlatformList) {
+                        popUpTo<Route.Setup> { inclusive = true }
                     }
                 }
             )
         }
 
-        composable(Route.PlatformList.path) {
+        composable<Route.PlatformList> {
             PlatformListScreen(
-                viewModel        = hiltViewModel(),
-                onPlatformClick  = { platformId ->
-                    navController.navigate(Route.RomList.go(platformId))
-                },
-                onCollectionsClick = { navController.navigate(Route.CollectionList.path) },
-                onSearchClick    = { navController.navigate(Route.Search.path) },
-                onDownloadsClick = navController::openDownloads,
-                onSettingsClick  = { navController.navigate(Route.Settings.path) },
+                viewModel          = hiltViewModel(),
+                onPlatformClick    = { navController.navigate(Route.RomList.platform(it)) },
+                onCollectionsClick = { navController.navigate(Route.CollectionList) },
+                onSearchClick      = { navController.navigate(Route.Search) },
+                onDownloadsClick   = navController::openDownloads,
+                onSettingsClick    = { navController.navigate(Route.Settings) },
             )
         }
 
-        composable(
-            route     = Route.RomList.TEMPLATE,
-            arguments = listOf(navArgument(Route.RomList.ARG) { type = NavType.IntType }),
-        ) {
+        composable<Route.RomList> {
             RomListScreen(
                 viewModel        = hiltViewModel(),
                 onRomClick       = navController::openRom,
@@ -96,33 +88,15 @@ fun RomMDroidNavHost() {
             )
         }
 
-        composable(Route.CollectionList.path) {
+        composable<Route.CollectionList> {
             CollectionListScreen(
                 viewModel         = hiltViewModel(),
-                onCollectionClick = { id -> navController.navigate(Route.CollectionRoms.go(id)) },
+                onCollectionClick = { navController.navigate(Route.RomList.collection(it)) },
                 onBack            = navController::popBackStack,
             )
         }
 
-        // Same screen as a platform's ROMs; only the argument differs, and
-        // RomListViewModel reads whichever it was given.
-        composable(
-            route     = Route.CollectionRoms.TEMPLATE,
-            arguments = listOf(navArgument(Route.CollectionRoms.ARG) { type = NavType.IntType }),
-        ) {
-            RomListScreen(
-                viewModel        = hiltViewModel(),
-                onRomClick       = navController::openRom,
-                onDownloadsClick = navController::openDownloads,
-                onFolderSettings = navController::openFolderMapping,
-                onBack           = navController::popBackStack,
-            )
-        }
-
-        composable(
-            route     = Route.RomDetail.TEMPLATE,
-            arguments = listOf(navArgument(Route.RomDetail.ARG) { type = NavType.IntType }),
-        ) {
+        composable<Route.RomDetail> {
             RomDetailScreen(
                 viewModel        = hiltViewModel(),
                 onFolderSettings = navController::openFolderMapping,
@@ -130,7 +104,7 @@ fun RomMDroidNavHost() {
             )
         }
 
-        composable(Route.Search.path) {
+        composable<Route.Search> {
             SearchScreen(
                 viewModel        = hiltViewModel(),
                 onRomClick       = navController::openRom,
@@ -139,7 +113,7 @@ fun RomMDroidNavHost() {
             )
         }
 
-        composable(Route.Downloads.path) {
+        composable<Route.Downloads> {
             DownloadsScreen(
                 viewModel  = hiltViewModel(),
                 onRomClick = navController::openRom,
@@ -147,13 +121,13 @@ fun RomMDroidNavHost() {
             )
         }
 
-        composable(Route.Settings.path) {
+        composable<Route.Settings> {
             SettingsScreen(
                 viewModel        = hiltViewModel(),
                 onFolderMapping  = navController::openFolderMapping,
                 onResetSetup     = {
                     // Wipe the back stack: the app is being re-pointed.
-                    navController.navigate(Route.Setup.path) {
+                    navController.navigate(Route.Setup) {
                         popUpTo(0) { inclusive = true }
                     }
                 },
@@ -161,7 +135,7 @@ fun RomMDroidNavHost() {
             )
         }
 
-        composable(Route.FolderMapping.path) {
+        composable<Route.FolderMapping> {
             FolderMappingScreen(
                 viewModel = hiltViewModel(),
                 onBack    = navController::popBackStack,
@@ -172,6 +146,6 @@ fun RomMDroidNavHost() {
 
 // The destinations more than one screen leads to.
 
-private fun NavController.openRom(romId: Int) = navigate(Route.RomDetail.go(romId))
-private fun NavController.openDownloads() = navigate(Route.Downloads.path)
-private fun NavController.openFolderMapping() = navigate(Route.FolderMapping.path)
+private fun NavController.openRom(romId: Int) = navigate(Route.RomDetail(romId))
+private fun NavController.openDownloads() = navigate(Route.Downloads)
+private fun NavController.openFolderMapping() = navigate(Route.FolderMapping)

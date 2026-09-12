@@ -29,9 +29,10 @@ data class RomEntity(
     val name: String?,
     val slug: String?,
     val summary: String?,
-    val regions: String,        // JSON-encoded list
-    val languages: String,      // JSON-encoded list
-    val tags: String,           // JSON-encoded list
+    /** As the server sent them; [app.rommdroid.domain.regionsFor] canonicalises. */
+    val regions: List<String>,
+    val languages: List<String>,
+    val tags: List<String>,
     val urlCover: String?,
     val pathCoverSmall: String?,
     val pathCoverLarge: String?,

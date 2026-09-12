@@ -12,7 +12,6 @@ composeBom              = "2025.01.01"
 navigationCompose       = "2.8.5"
 room                    = "2.6.1"
 workManager             = "2.10.0"
-securityCrypto          = "1.1.0-alpha06"
 
 # DI
 hilt                    = "2.54"
@@ -36,6 +35,7 @@ espresso                = "3.6.1"
 # AndroidX core
 androidx-core-ktx              = { group = "androidx.core",           name = "core-ktx",              version.ref = "coreKtx" }
 androidx-lifecycle-runtime     = { group = "androidx.lifecycle",      name = "lifecycle-runtime-ktx",  version.ref = "lifecycle" }
+androidx-lifecycle-runtime-compose = { group = "androidx.lifecycle",  name = "lifecycle-runtime-compose", version.ref = "lifecycle" }
 androidx-lifecycle-viewmodel   = { group = "androidx.lifecycle",      name = "lifecycle-viewmodel-compose", version.ref = "lifecycle" }
 androidx-activity-compose      = { group = "androidx.activity",       name = "activity-compose",       version.ref = "activityCompose" }
 
@@ -62,9 +62,6 @@ room-compiler                  = { group = "androidx.room",           name = "ro
 work-runtime-ktx               = { group = "androidx.work",           name = "work-runtime-ktx",       version.ref = "workManager" }
 hilt-work                      = { group = "androidx.hilt",           name = "hilt-work",              version = "1.2.0" }
 hilt-work-compiler             = { group = "androidx.hilt",           name = "hilt-compiler",          version = "1.2.0" }
-
-# Security
-security-crypto                = { group = "androidx.security",       name = "security-crypto",        version.ref = "securityCrypto" }
 
 # Hilt DI
 hilt-android                   = { group = "com.google.dagger",       name = "hilt-android",           version.ref = "hilt" }

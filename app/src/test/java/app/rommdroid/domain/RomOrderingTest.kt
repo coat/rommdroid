@@ -27,9 +27,9 @@ class RomOrderingTest {
         name = name,
         slug = null,
         summary = null,
-        regions = regions.joinToString(","),
-        languages = "",
-        tags = "",
+        regions = regions,
+        languages = emptyList(),
+        tags = emptyList(),
         urlCover = null,
         pathCoverSmall = null,
         pathCoverLarge = null,
@@ -41,7 +41,7 @@ class RomOrderingTest {
     )
 
     private val regionsOf: (RomEntity) -> List<String> = { entity ->
-        romRegions(entity) { raw -> raw.split(',').filter { it.isNotBlank() } }
+        regionsFor(entity.regions, entity.fsName)
     }
 
     private fun groups(vararg roms: RomEntity): List<RomGroup> =

@@ -13,13 +13,14 @@ import app.rommdroid.ui.gamepad.focusOutline
 import app.rommdroid.ui.components.InputKind
 import app.rommdroid.ui.components.OutlinedInputField
 import app.rommdroid.ui.components.rememberInputFieldHandle
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 
 @Composable
 fun SetupScreen(
     viewModel: SetupViewModel,
     onComplete: () -> Unit,
 ) {
-    val state by viewModel.state.collectAsState()
+    val state by viewModel.state.collectAsStateWithLifecycle()
 
     var serverUrl by rememberSaveable { mutableStateOf("http://") }
     var username  by rememberSaveable { mutableStateOf("") }

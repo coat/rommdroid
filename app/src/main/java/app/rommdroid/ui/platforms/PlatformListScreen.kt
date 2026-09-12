@@ -27,8 +27,8 @@ import app.rommdroid.ui.gamepad.RestoreFocus
 import coil3.compose.AsyncImage
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun PlatformListScreen(
     viewModel: PlatformListViewModel,
@@ -38,10 +38,10 @@ fun PlatformListScreen(
     onDownloadsClick: () -> Unit,
     onSettingsClick: () -> Unit,
 ) {
-    val platforms   by viewModel.platforms.collectAsState()
-    val collections by viewModel.collectionCount.collectAsState()
-    val syncing     by viewModel.sync.syncing.collectAsState()
-    val error       by viewModel.sync.error.collectAsState()
+    val platforms   by viewModel.platforms.collectAsStateWithLifecycle()
+    val collections by viewModel.collectionCount.collectAsStateWithLifecycle()
+    val syncing     by viewModel.sync.syncing.collectAsStateWithLifecycle()
+    val error       by viewModel.sync.error.collectAsStateWithLifecycle()
 
     val listState = rememberLazyListState()
 

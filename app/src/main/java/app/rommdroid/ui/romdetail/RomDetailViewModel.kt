@@ -7,6 +7,7 @@ import androidx.compose.runtime.*
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import androidx.navigation.toRoute
 import app.rommdroid.data.download.DownloadItem
 import app.rommdroid.data.download.DownloadQueue
 import app.rommdroid.data.download.FolderContents
@@ -35,7 +36,6 @@ sealed interface RomDetailState {
     data class  Error(val message: String) : RomDetailState
 }
 
-@OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
 @HiltViewModel
 class RomDetailViewModel @Inject constructor(
     savedStateHandle: SavedStateHandle,
@@ -49,9 +49,7 @@ class RomDetailViewModel @Inject constructor(
     val requests = DownloadRequester(queue, repo::regionsOf, viewModelScope)
 
     /** The variant currently being shown; changes when the user picks another. */
-    private val _romId = MutableStateFlow<Int>(
-        checkNotNull(savedStateHandle[Route.RomDetail.ARG])
-    )
+    private val _romId = MutableStateFlow(savedStateHandle.toRoute<Route.RomDetail>().romId)
     val romId: StateFlow<Int> = _romId.asStateFlow()
 
     private val _state = MutableStateFlow<RomDetailState>(RomDetailState.Loading)
