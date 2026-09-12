@@ -55,9 +55,6 @@
           # ADB / fastboot
           android-tools
 
-          # SVG -> PNG for design/logo/generate-icons.py
-          resvg
-
           # Misc dev utils
           jq
           curl
