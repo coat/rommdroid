@@ -13,6 +13,13 @@
     kotlinx.serialization.KSerializer serializer(...);
 }
 
+# Navigation Compose type-safe routes: an enum argument's NavType is resolved
+# at runtime by Class.forName on its serialName, so route classes must keep
+# their fully qualified names (only their names; members may still shrink).
+-keepnames class app.rommdroid.ui.navigation.Route
+-keepnames class app.rommdroid.ui.navigation.Route$*
+-keepnames class app.rommdroid.ui.navigation.Route$*$*
+
 # Keep Retrofit / OkHttp
 -dontwarn okhttp3.**
 -dontwarn okio.**
