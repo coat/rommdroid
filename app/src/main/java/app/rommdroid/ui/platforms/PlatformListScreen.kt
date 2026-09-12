@@ -1,80 +1,32 @@
-package app.rommdroid.ui.screens
+package app.rommdroid.ui.platforms
 
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
+import androidx.compose.material.icons.Icons
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
-import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
-import androidx.lifecycle.ViewModel
-import androidx.lifecycle.viewModelScope
+import app.rommdroid.data.db.PlatformEntity
+import app.rommdroid.ui.components.ConnectionError
+import app.rommdroid.ui.gamepad.focusOutline
+import app.rommdroid.ui.gamepad.GamepadAction
+import app.rommdroid.ui.gamepad.GamepadButton
+import app.rommdroid.ui.gamepad.GamepadHandler
+import app.rommdroid.ui.gamepad.GamepadHint
+import app.rommdroid.ui.gamepad.GamepadHintBar
+import app.rommdroid.ui.gamepad.gamepadRow
+import app.rommdroid.ui.gamepad.ListGamepadScrolling
+import app.rommdroid.ui.gamepad.RestoreFocus
 import coil3.compose.AsyncImage
-import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
-import app.rommdroid.data.db.PlatformEntity
-import app.rommdroid.data.repository.RomRepository
-import app.rommdroid.ui.common.SyncTracker
-import app.rommdroid.ui.components.ConnectionError
-import app.rommdroid.ui.components.GamepadAction
-import app.rommdroid.ui.components.GamepadButton
-import app.rommdroid.ui.components.GamepadHandler
-import app.rommdroid.ui.components.GamepadHint
-import app.rommdroid.ui.components.GamepadHintBar
-import app.rommdroid.ui.components.ListGamepadScrolling
-import app.rommdroid.ui.components.RestoreFocus
-import app.rommdroid.ui.components.focusOutline
-import app.rommdroid.ui.components.gamepadRow
-import javax.inject.Inject
-
-// ViewModel
-
-@HiltViewModel
-class PlatformListViewModel @Inject constructor(
-    private val repo: RomRepository,
-) : ViewModel() {
-
-    val platforms: StateFlow<List<PlatformEntity>> =
-        repo.observePlatforms()
-            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
-
-    /** How many collections the cache holds. The pinned row draws only when this
-     *  is non-zero, so a server with none gets no row to an empty screen. */
-    val collectionCount: StateFlow<Int> =
-        repo.observeCollectionCount()
-            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), 0)
-
-    val sync = SyncTracker()
-
-    init {
-        refresh()
-    }
-
-    fun refresh() {
-        viewModelScope.launch {
-            sync.run {
-                // One refresh, two fetches: a server too old to serve
-                // collections, or a token minted before this app asked for
-                // collections.read, must not take the platform list down with
-                // it. When both fail the platforms' failure is the one reported.
-                val platforms = runCatching { repo.syncPlatforms() }
-                val collections = runCatching { repo.syncCollections() }
-                (platforms.exceptionOrNull() ?: collections.exceptionOrNull())?.let { throw it }
-            }
-        }
-    }
-
-    fun coverUrl(platform: PlatformEntity): String? = repo.coverUrl(platform)
-}
-
-// Screen
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable

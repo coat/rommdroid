@@ -8,9 +8,9 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.rememberUpdatedState
 import app.rommdroid.data.download.QueueMessage
-import app.rommdroid.ui.components.GamepadButton
-import app.rommdroid.ui.components.rememberButtonLayout
-import app.rommdroid.ui.components.withButton
+import app.rommdroid.ui.gamepad.GamepadButton
+import app.rommdroid.ui.gamepad.rememberButtonLayout
+import app.rommdroid.ui.gamepad.withButton
 import kotlinx.coroutines.flow.Flow
 
 /**

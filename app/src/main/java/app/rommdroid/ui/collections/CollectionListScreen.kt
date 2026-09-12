@@ -1,69 +1,34 @@
-package app.rommdroid.ui.screens
+package app.rommdroid.ui.collections
 
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Bookmarks
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.Icons
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
-import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.lifecycle.ViewModel
-import androidx.lifecycle.viewModelScope
-import coil3.compose.AsyncImage
-import dagger.hilt.android.lifecycle.HiltViewModel
-import kotlinx.coroutines.flow.*
-import kotlinx.coroutines.launch
 import app.rommdroid.data.db.CollectionEntity
-import app.rommdroid.data.repository.RomRepository
-import app.rommdroid.ui.common.SyncTracker
 import app.rommdroid.ui.components.BackButton
 import app.rommdroid.ui.components.ConnectionError
-import app.rommdroid.ui.components.GamepadButton
-import app.rommdroid.ui.components.GamepadHint
-import app.rommdroid.ui.components.GamepadHintBar
-import app.rommdroid.ui.components.ListGamepadScrolling
-import app.rommdroid.ui.components.RestoreFocus
-import app.rommdroid.ui.components.focusOutline
-import app.rommdroid.ui.components.gamepadRow
-import javax.inject.Inject
-
-// ViewModel
-
-@HiltViewModel
-class CollectionListViewModel @Inject constructor(
-    private val repo: RomRepository,
-) : ViewModel() {
-
-    val collections: StateFlow<List<CollectionEntity>> =
-        repo.observeCollections()
-            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
-
-    val sync = SyncTracker()
-
-    init {
-        refresh()
-    }
-
-    /** The platform list already synced these on the way in, so this is for a
-     *  collection changed while the app was open, and for retrying a failure. */
-    fun refresh() {
-        viewModelScope.launch { sync.run { repo.syncCollections() } }
-    }
-
-    fun coverUrl(collection: CollectionEntity): String? = repo.coverUrl(collection)
-}
-
-// Screen
+import app.rommdroid.ui.gamepad.focusOutline
+import app.rommdroid.ui.gamepad.GamepadButton
+import app.rommdroid.ui.gamepad.GamepadHint
+import app.rommdroid.ui.gamepad.GamepadHintBar
+import app.rommdroid.ui.gamepad.gamepadRow
+import app.rommdroid.ui.gamepad.ListGamepadScrolling
+import app.rommdroid.ui.gamepad.RestoreFocus
+import coil3.compose.AsyncImage
+import kotlinx.coroutines.flow.*
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable

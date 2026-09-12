@@ -3,16 +3,25 @@ package app.rommdroid.ui
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.navigation.NavController
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
-import app.rommdroid.ui.components.GamepadAction
-import app.rommdroid.ui.components.GamepadHandler
+import app.rommdroid.ui.gamepad.GamepadAction
+import app.rommdroid.ui.gamepad.GamepadHandler
 import app.rommdroid.ui.navigation.Route
-import app.rommdroid.ui.screens.*
+import app.rommdroid.ui.collections.CollectionListScreen
+import app.rommdroid.ui.downloads.DownloadsScreen
+import app.rommdroid.ui.platforms.PlatformListScreen
+import app.rommdroid.ui.romdetail.RomDetailScreen
+import app.rommdroid.ui.romlist.RomListScreen
+import app.rommdroid.ui.search.SearchScreen
+import app.rommdroid.ui.settings.FolderMappingScreen
+import app.rommdroid.ui.settings.SettingsScreen
+import app.rommdroid.ui.setup.SetupScreen
 
 @Composable
 fun RomMDroidNavHost() {
@@ -69,7 +78,7 @@ fun RomMDroidNavHost() {
                 },
                 onCollectionsClick = { navController.navigate(Route.CollectionList.path) },
                 onSearchClick    = { navController.navigate(Route.Search.path) },
-                onDownloadsClick = { navController.navigate(Route.Downloads.path) },
+                onDownloadsClick = navController::openDownloads,
                 onSettingsClick  = { navController.navigate(Route.Settings.path) },
             )
         }
@@ -80,10 +89,10 @@ fun RomMDroidNavHost() {
         ) {
             RomListScreen(
                 viewModel        = hiltViewModel(),
-                onRomClick       = { romId -> navController.navigate(Route.RomDetail.go(romId)) },
-                onDownloadsClick = { navController.navigate(Route.Downloads.path) },
-                onFolderSettings = { navController.navigate(Route.FolderMapping.path) },
-                onBack           = { navController.popBackStack() },
+                onRomClick       = navController::openRom,
+                onDownloadsClick = navController::openDownloads,
+                onFolderSettings = navController::openFolderMapping,
+                onBack           = navController::popBackStack,
             )
         }
 
@@ -91,7 +100,7 @@ fun RomMDroidNavHost() {
             CollectionListScreen(
                 viewModel         = hiltViewModel(),
                 onCollectionClick = { id -> navController.navigate(Route.CollectionRoms.go(id)) },
-                onBack            = { navController.popBackStack() },
+                onBack            = navController::popBackStack,
             )
         }
 
@@ -103,10 +112,10 @@ fun RomMDroidNavHost() {
         ) {
             RomListScreen(
                 viewModel        = hiltViewModel(),
-                onRomClick       = { romId -> navController.navigate(Route.RomDetail.go(romId)) },
-                onDownloadsClick = { navController.navigate(Route.Downloads.path) },
-                onFolderSettings = { navController.navigate(Route.FolderMapping.path) },
-                onBack           = { navController.popBackStack() },
+                onRomClick       = navController::openRom,
+                onDownloadsClick = navController::openDownloads,
+                onFolderSettings = navController::openFolderMapping,
+                onBack           = navController::popBackStack,
             )
         }
 
@@ -116,47 +125,53 @@ fun RomMDroidNavHost() {
         ) {
             RomDetailScreen(
                 viewModel        = hiltViewModel(),
-                onFolderSettings = { navController.navigate(Route.FolderMapping.path) },
-                onBack           = { navController.popBackStack() },
+                onFolderSettings = navController::openFolderMapping,
+                onBack           = navController::popBackStack,
             )
         }
 
         composable(Route.Search.path) {
             SearchScreen(
                 viewModel        = hiltViewModel(),
-                onRomClick       = { romId -> navController.navigate(Route.RomDetail.go(romId)) },
-                onFolderSettings = { navController.navigate(Route.FolderMapping.path) },
-                onBack           = { navController.popBackStack() },
+                onRomClick       = navController::openRom,
+                onFolderSettings = navController::openFolderMapping,
+                onBack           = navController::popBackStack,
             )
         }
 
         composable(Route.Downloads.path) {
             DownloadsScreen(
                 viewModel  = hiltViewModel(),
-                onRomClick = { romId -> navController.navigate(Route.RomDetail.go(romId)) },
-                onBack     = { navController.popBackStack() },
+                onRomClick = navController::openRom,
+                onBack     = navController::popBackStack,
             )
         }
 
         composable(Route.Settings.path) {
             SettingsScreen(
                 viewModel        = hiltViewModel(),
-                onFolderMapping  = { navController.navigate(Route.FolderMapping.path) },
+                onFolderMapping  = navController::openFolderMapping,
                 onResetSetup     = {
                     // Wipe the back stack: the app is being re-pointed.
                     navController.navigate(Route.Setup.path) {
                         popUpTo(0) { inclusive = true }
                     }
                 },
-                onBack           = { navController.popBackStack() },
+                onBack           = navController::popBackStack,
             )
         }
 
         composable(Route.FolderMapping.path) {
             FolderMappingScreen(
                 viewModel = hiltViewModel(),
-                onBack    = { navController.popBackStack() },
+                onBack    = navController::popBackStack,
             )
         }
     }
 }
+
+// The destinations more than one screen leads to.
+
+private fun NavController.openRom(romId: Int) = navigate(Route.RomDetail.go(romId))
+private fun NavController.openDownloads() = navigate(Route.Downloads.path)
+private fun NavController.openFolderMapping() = navigate(Route.FolderMapping.path)

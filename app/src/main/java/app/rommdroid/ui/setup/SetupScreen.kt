@@ -1,5 +1,6 @@
-package app.rommdroid.ui.screens
+package app.rommdroid.ui.setup
 
+import android.view.inputmethod.EditorInfo
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -7,44 +8,11 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
-import androidx.lifecycle.ViewModel
-import androidx.lifecycle.viewModelScope
-import dagger.hilt.android.lifecycle.HiltViewModel
-import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.launch
-import android.view.inputmethod.EditorInfo
-import app.rommdroid.data.repository.ServerConnector
 import app.rommdroid.ui.common.ConnectionState
+import app.rommdroid.ui.gamepad.focusOutline
 import app.rommdroid.ui.components.InputKind
 import app.rommdroid.ui.components.OutlinedInputField
-import app.rommdroid.ui.components.focusOutline
 import app.rommdroid.ui.components.rememberInputFieldHandle
-import javax.inject.Inject
-
-// ViewModel
-
-@HiltViewModel
-class SetupViewModel @Inject constructor(
-    private val connector: ServerConnector,
-) : ViewModel() {
-
-    private val _state = MutableStateFlow<ConnectionState>(ConnectionState.Idle)
-    val state: StateFlow<ConnectionState> = _state.asStateFlow()
-
-    fun connect(serverUrl: String, username: String, password: String) {
-        viewModelScope.launch {
-            _state.value = ConnectionState.Loading
-            _state.value = connector.signIn(serverUrl, username, password).fold(
-                onSuccess = { ConnectionState.Saved },
-                onFailure = { ConnectionState.Error(it.message ?: "Connection failed") },
-            )
-        }
-    }
-}
-
-// Screen
 
 @Composable
 fun SetupScreen(

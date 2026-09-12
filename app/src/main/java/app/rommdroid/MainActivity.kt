@@ -17,10 +17,10 @@ import androidx.core.content.ContextCompat
 import dagger.hilt.android.AndroidEntryPoint
 import app.rommdroid.data.repository.GamepadLayoutRepository
 import app.rommdroid.ui.RomMDroidNavHost
-import app.rommdroid.ui.components.GamepadAction
-import app.rommdroid.ui.components.GamepadDispatcher
-import app.rommdroid.ui.components.LocalGamepad
-import app.rommdroid.ui.components.LocalGamepadLayout
+import app.rommdroid.ui.gamepad.GamepadAction
+import app.rommdroid.ui.gamepad.GamepadDispatcher
+import app.rommdroid.ui.gamepad.LocalGamepad
+import app.rommdroid.ui.gamepad.LocalGamepadLayout
 import app.rommdroid.ui.theme.RomMDroidTheme
 import javax.inject.Inject
 
