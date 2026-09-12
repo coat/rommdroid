@@ -1,5 +1,7 @@
 package app.rommdroid.util
 
+import java.util.Locale
+
 // The same region reaches us under whichever convention the ROM set uses:
 // No-Intro ("USA"), GoodTools ("U"), or the bare ISO code. All three have to
 // collapse onto one value or a game shows up as two regions.
@@ -76,6 +78,22 @@ fun regionFlag(code: String): String? = when (val c = normalizeRegion(code)) {
 fun regionLabel(code: String): String {
     val c = normalizeRegion(code)
     return regionFlag(c) ?: c.take(3)
+}
+
+/** The region spelled out, for somewhere a flag alone would be a guessing
+ *  game: "Europe" beside the flag on a filter chip. The device's language,
+ *  since that is who is reading it, except for the two every ROM set names
+ *  its own way: the locale calls them "United States" and "European Union". */
+fun regionName(code: String): String = when (val c = normalizeRegion(code)) {
+    WORLD -> "World"
+    ASIA  -> "Asia"
+    "US"  -> "USA"
+    "EU"  -> "Europe"
+    else  -> if (flagOf(c) != null) {
+        Locale("", c).getDisplayCountry(Locale.getDefault()).ifBlank { c }
+    } else {
+        c
+    }
 }
 
 /** Regional-indicator pair, which Android's emoji font renders as a flag. */

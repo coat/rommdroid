@@ -3,12 +3,16 @@ package app.rommdroid.ui.screens
 import android.view.inputmethod.EditorInfo
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.ArrowDownward
+import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Download
@@ -16,6 +20,7 @@ import androidx.compose.material.icons.filled.ErrorOutline
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.filled.VideogameAsset
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -26,6 +31,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -46,6 +52,7 @@ import app.rommdroid.data.download.QueueMessage
 import app.rommdroid.data.download.asMessage
 import app.rommdroid.data.repository.CredentialRepository
 import app.rommdroid.data.repository.DownloadTargetRepository
+import app.rommdroid.data.repository.RomListPreferencesRepository
 import app.rommdroid.data.repository.RomRepository
 import app.rommdroid.ui.components.FastScroller
 import app.rommdroid.ui.components.GamepadAction
@@ -64,8 +71,17 @@ import app.rommdroid.ui.components.rememberInputFieldHandle
 import app.rommdroid.ui.components.scrollPage
 import app.rommdroid.ui.components.withButton
 import app.rommdroid.ui.navigation.Route
+import app.rommdroid.util.NO_REGION
+import app.rommdroid.util.RegionCount
 import app.rommdroid.util.RomGroup
 import app.rommdroid.util.RomSection
+import app.rommdroid.util.RomSort
+import app.rommdroid.util.RomSortKey
+import app.rommdroid.util.countRegions
+import app.rommdroid.util.keepRegions
+import app.rommdroid.util.regionFlag
+import app.rommdroid.util.regionName
+import app.rommdroid.util.sortGroups
 import app.rommdroid.util.artworkUrl
 import app.rommdroid.util.displayName
 import app.rommdroid.util.formatSize
@@ -90,6 +106,7 @@ class RomListViewModel @Inject constructor(
     private val platformDao: PlatformDao,
     private val downloadTargets: DownloadTargetRepository,
     private val localRoms: LocalRomIndex,
+    private val listPrefs: RomListPreferencesRepository,
 ) : ViewModel() {
 
     /** What this list is a list of. The screen is identical either way; the two
@@ -104,23 +121,46 @@ class RomListViewModel @Inject constructor(
         savedStateHandle.get<Int>(Route.RomList.ARG)?.let(Source::Platform)
             ?: Source.Collection(checkNotNull(savedStateHandle[Route.CollectionRoms.ARG]))
 
-    /** Regional copies fold into one row: a No-Intro set lists three nearly
-     *  identical names. The variants stay reachable from the detail screen. */
-    private val groups: StateFlow<List<RomGroup>> =
+    private val roms: Flow<List<RomEntity>> =
         when (source) {
             is Source.Platform   -> repo.observeRoms(source.id)
             is Source.Collection -> repo.observeCollectionRoms(source.id)
         }
-            .map { roms ->
-                groupRoms(
-                    roms             = roms,
-                    preferredRegions = regionPreference(Locale.getDefault().country),
-                    regionsOf        = repo::regionsOf,
-                )
-            }
-            // A few thousand ROMs, refolded every time the sync writes a page.
-            .flowOn(Dispatchers.Default)
+            // Shared: the fold and the region chips both read it.
             .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    /** Which regions the list is cut down to; empty shows every ROM. Shared
+     *  with every other list, and kept across launches. */
+    val regionFilter: StateFlow<Set<String>> = listPrefs.regions
+
+    val sort: StateFlow<RomSort> = listPrefs.sort
+
+    /** The regions on offer, counted over the whole list rather than the
+     *  filtered one so a chip does not vanish the moment it is picked. A
+     *  region the user chose elsewhere stays on the row at zero, or there
+     *  would be no way to see why the list is short, or to turn it off. */
+    val regions: StateFlow<List<RegionCount>> = combine(roms, regionFilter) { roms, selected ->
+        val present = countRegions(roms, repo::regionsOf)
+        val missing = selected - present.map { it.region }.toSet()
+        present + missing.sorted().map { RegionCount(it, 0) }
+    }
+        .flowOn(Dispatchers.Default)
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    /** Regional copies fold into one row: a No-Intro set lists three nearly
+     *  identical names. The variants stay reachable from the detail screen.
+     *  The region filter runs first, so a filtered row leads with, and
+     *  long-press downloads, a copy from the chosen region. */
+    private val groups: StateFlow<List<RomGroup>> = combine(roms, regionFilter) { roms, selected ->
+        groupRoms(
+            roms             = keepRegions(roms, selected, repo::regionsOf),
+            preferredRegions = regionPreference(Locale.getDefault().country),
+            regionsOf        = repo::regionsOf,
+        )
+    }
+        // A few thousand ROMs, refolded every time the sync writes a page.
+        .flowOn(Dispatchers.Default)
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
     /** Text typed into the list's filter field; blank shows the whole platform. */
     private val _filter = MutableStateFlow("")
@@ -128,18 +168,34 @@ class RomListViewModel @Inject constructor(
 
     fun setFilter(text: String) { _filter.value = text }
 
+    /** Pick a key, or flip the one already picked: a second press on "Rating"
+     *  is the only way to ask for the worst-rated first. */
+    fun sortBy(key: RomSortKey) {
+        val current = sort.value
+        listPrefs.setSort(if (current.key == key) current.reversed() else RomSort.of(key))
+    }
+
+    fun toggleRegion(region: String) {
+        val current = regionFilter.value
+        listPrefs.setRegions(if (region in current) current - region else current + region)
+    }
+
+    fun clearRegions() { listPrefs.setRegions(emptySet()) }
+
     /**
-     * The rows as drawn: filtered, then cut into letter runs. A filtered list
-     * comes back as one unlabelled run, since headers only earn their space
-     * over hundreds of rows.
+     * The rows as drawn: filtered, sorted, then cut into letter runs. A filtered
+     * list comes back as one unlabelled run, since headers only earn their
+     * space over hundreds of rows; so does any order but name, where a letter
+     * says nothing about where a row is.
      */
-    val sections: StateFlow<List<RomSection>> = combine(groups, _filter) { rows, filter ->
+    val sections: StateFlow<List<RomSection>> = combine(groups, _filter, sort) { rows, filter, sort ->
         val needle  = filter.trim()
         val matches = if (needle.isEmpty()) rows else rows.filter { it.matches(needle) }
+        val ordered = sortGroups(matches, sort)
         when {
-            needle.isEmpty()  -> sectionsOf(matches)
-            matches.isEmpty() -> emptyList()
-            else              -> listOf(RomSection(label = null, groups = matches))
+            ordered.isEmpty()                                 -> emptyList()
+            needle.isEmpty() && sort.key == RomSortKey.Name  -> sectionsOf(ordered)
+            else -> listOf(RomSection(label = null, groups = ordered))
         }
     }
         // Same reason as the fold above, and this reruns on every keystroke.
@@ -263,6 +319,9 @@ fun RomListScreen(
     val statuses by viewModel.downloadStatus.collectAsState()
     val queueing by viewModel.queueing.collectAsState()
     val onDevice by viewModel.onDevice.collectAsState()
+    val sort     by viewModel.sort.collectAsState()
+    val regions  by viewModel.regions.collectAsState()
+    val regionFilter by viewModel.regionFilter.collectAsState()
 
     val snackbarHostState = remember { SnackbarHostState() }
     val haptics = LocalHapticFeedback.current
@@ -274,6 +333,14 @@ fun RomListScreen(
     val filterField = rememberInputFieldHandle()
     val listState   = rememberLazyListState()
     val scope       = rememberCoroutineScope()
+
+    // The sort and region chips do take a row, but only while they are open:
+    // a sort is picked once and a region filter rarely changes, so the row is
+    // gone again before the list is read.
+    var showOptions by rememberSaveable { mutableStateOf(false) }
+    // With a controller the cursor moves onto the chips as they open.
+    val optionsFocus = remember { FocusRequester() }
+    RestoreFocus(optionsFocus, ready = showOptions)
 
     // Where every letter starts: the scroller's bubble reads it, the shoulder
     // buttons step through it.
@@ -292,15 +359,17 @@ fun RomListScreen(
     }
     // The remembered row may not have survived the last keystroke.
     val focusTarget = focusedGroup?.key ?: sections.firstOrNull()?.groups?.firstOrNull()?.key
-    RestoreFocus(rowFocus, ready = !filtering && focusTarget != null)
+    RestoreFocus(rowFocus, ready = !filtering && !showOptions && focusTarget != null)
 
     // Each keystroke narrows the list, so the old offset lands mid-matches or
-    // past the end. Only on a real change: a rotation re-runs the effect with
-    // the same filter, and the restored list state is the one worth keeping.
-    var scrolledFor by rememberSaveable { mutableStateOf(filter) }
-    LaunchedEffect(filter) {
-        if (scrolledFor != filter) {
-            scrolledFor = filter
+    // past the end; a new sort or region does the same to the whole list. Only
+    // on a real change: a rotation re-runs the effect with the same shape, and
+    // the restored list state is the one worth keeping.
+    val listShape = "$filter|${sort.key}|${sort.descending}|${regionFilter.sorted()}"
+    var scrolledFor by rememberSaveable { mutableStateOf(listShape) }
+    LaunchedEffect(listShape) {
+        if (scrolledFor != listShape) {
+            scrolledFor = listShape
             listState.scrollToItem(0)
         }
     }
@@ -341,8 +410,15 @@ fun RomListScreen(
         focusRow(focusedKey ?: sections.firstOrNull()?.groups?.firstOrNull()?.key)
     }
 
-    // Back closes the field before it leaves the screen.
+    // Same again for the chips: the cursor is on one as they go.
+    fun closeOptions() {
+        showOptions = false
+        focusRow(focusedKey ?: sections.firstOrNull()?.groups?.firstOrNull()?.key)
+    }
+
+    // Back closes the field, or the chips, before it leaves the screen.
     BackHandler(enabled = filtering) { closeFilter() }
+    BackHandler(enabled = showOptions && !filtering) { closeOptions() }
 
     /**
      * L1 and R1 step a letter at a time, landing on the header so the letter is
@@ -462,6 +538,17 @@ fun RomListScreen(
                         ) {
                             Icon(Icons.Default.Search, contentDescription = "Filter ROMs")
                         }
+                        IconButton(
+                            onClick  = { if (showOptions) closeOptions() else showOptions = true },
+                            modifier = Modifier.focusOutline(),
+                        ) {
+                            // A dot when the chips are closed but changing the
+                            // list, or a short list looks like a short library.
+                            val active = regionFilter.isNotEmpty() || sort != RomSort.DEFAULT
+                            BadgedBox(badge = { if (active && !showOptions) Badge() }) {
+                                Icon(Icons.Default.Tune, contentDescription = "Sort and regions")
+                            }
+                        }
                         IconButton(onClick = onDownloadsClick, modifier = Modifier.focusOutline()) {
                             Icon(Icons.Default.Download, contentDescription = "Downloads")
                         }
@@ -477,70 +564,108 @@ fun RomListScreen(
         },
         bottomBar = {
             GamepadHintBar(
-                listOf(
-                    GamepadHint(GamepadButton.A, "Open"),
-                    GamepadHint(GamepadButton.X, "Download"),
-                    GamepadHint(GamepadButton.Y, "Filter"),
-                    GamepadHint(GamepadButton.L1, "Letter"),
-                    GamepadHint(GamepadButton.B, "Back"),
-                )
+                if (showOptions) {
+                    listOf(
+                        GamepadHint(GamepadButton.A, "Toggle"),
+                        GamepadHint(GamepadButton.B, "Close"),
+                    )
+                } else {
+                    listOf(
+                        GamepadHint(GamepadButton.A, "Open"),
+                        GamepadHint(GamepadButton.X, "Download"),
+                        GamepadHint(GamepadButton.Y, "Filter"),
+                        GamepadHint(GamepadButton.L1, "Letter"),
+                        GamepadHint(GamepadButton.B, "Back"),
+                    )
+                }
             )
         },
     ) { padding ->
-        Box(
+        Column(
             Modifier
                 .fillMaxSize()
                 .padding(padding)
         ) {
-            when {
-                syncing && sections.isEmpty() && filter.isBlank() -> {
-                    CircularProgressIndicator(Modifier.align(Alignment.Center))
-                }
-                sections.isEmpty() && filter.isNotBlank() -> {
-                    Text(
-                        text      = "No ROMs match \"${filter.trim()}\".",
-                        style     = MaterialTheme.typography.bodyMedium,
-                        color     = MaterialTheme.colorScheme.onSurfaceVariant,
-                        textAlign = TextAlign.Center,
-                        modifier  = Modifier.align(Alignment.Center).padding(32.dp),
-                    )
-                }
-                else -> {
-                    LazyColumn(state = listState) {
-                        sections.forEach { section ->
-                            // Sticky, so the letter stays readable through a flick.
-                            section.label?.let { label ->
-                                stickyHeader(key = "section:$label") { SectionHeader(label) }
-                            }
-                            items(section.groups, key = { it.key }) { group ->
-                                RomRow(
-                                    group       = group,
-                                    coverUrl    = viewModel.coverUrl(group.primary),
-                                    status      = group.downloadStatus(statuses),
-                                    onDevice    = group.isOnDevice(onDevice),
-                                    showPlatform = viewModel.mixedPlatforms,
-                                    queueing    = group.key in queueing,
-                                    onClick     = { onRomClick(group.primary.id) },
-                                    onLongClick = {
-                                        haptics.performHapticFeedback(HapticFeedbackType.LongPress)
-                                        viewModel.download(group)
-                                    },
-                                    onFocused   = { focusedKey = group.key },
-                                    focusRequester = rowFocus.takeIf { group.key == focusTarget },
-                                )
-                                HorizontalDivider()
-                            }
+            // Not animated out: the row has to be gone within the few frames the
+            // cursor is asked back onto the list, or the bar catches it instead.
+            if (showOptions) {
+                ListOptions(
+                    sort           = sort,
+                    onSort         = viewModel::sortBy,
+                    regions        = regions,
+                    selected       = regionFilter,
+                    onToggleRegion = viewModel::toggleRegion,
+                    focusRequester = optionsFocus,
+                )
+            }
+            Box(Modifier.fillMaxSize()) {
+                when {
+                    syncing && sections.isEmpty() && filter.isBlank() -> {
+                        CircularProgressIndicator(Modifier.align(Alignment.Center))
+                    }
+                    sections.isEmpty() && filter.isNotBlank() -> {
+                        Text(
+                            text      = "No ROMs match \"${filter.trim()}\".",
+                            style     = MaterialTheme.typography.bodyMedium,
+                            color     = MaterialTheme.colorScheme.onSurfaceVariant,
+                            textAlign = TextAlign.Center,
+                            modifier  = Modifier.align(Alignment.Center).padding(32.dp),
+                        )
+                    }
+                    sections.isEmpty() && regionFilter.isNotEmpty() -> {
+                        Column(
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            modifier = Modifier.align(Alignment.Center).padding(32.dp),
+                        ) {
+                            Text(
+                                text      = "No ROMs from the selected regions.",
+                                style     = MaterialTheme.typography.bodyMedium,
+                                color     = MaterialTheme.colorScheme.onSurfaceVariant,
+                                textAlign = TextAlign.Center,
+                            )
+                            TextButton(
+                                onClick  = viewModel::clearRegions,
+                                modifier = Modifier.focusOutline(),
+                            ) { Text("Show all regions") }
                         }
                     }
-                    FastScroller(
-                        state    = listState,
-                        index    = sectionIndex,
-                        modifier = Modifier.align(Alignment.CenterEnd),
-                    )
-                    if (syncing) {
-                        LinearProgressIndicator(
-                            modifier = Modifier.fillMaxWidth().align(Alignment.TopCenter)
+                    else -> {
+                        LazyColumn(state = listState) {
+                            sections.forEach { section ->
+                                // Sticky, so the letter stays readable through a flick.
+                                section.label?.let { label ->
+                                    stickyHeader(key = "section:$label") { SectionHeader(label) }
+                                }
+                                items(section.groups, key = { it.key }) { group ->
+                                    RomRow(
+                                        group       = group,
+                                        coverUrl    = viewModel.coverUrl(group.primary),
+                                        status      = group.downloadStatus(statuses),
+                                        onDevice    = group.isOnDevice(onDevice),
+                                        showPlatform = viewModel.mixedPlatforms,
+                                        queueing    = group.key in queueing,
+                                        onClick     = { onRomClick(group.primary.id) },
+                                        onLongClick = {
+                                            haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                                            viewModel.download(group)
+                                        },
+                                        onFocused   = { focusedKey = group.key },
+                                        focusRequester = rowFocus.takeIf { group.key == focusTarget },
+                                    )
+                                    HorizontalDivider()
+                                }
+                            }
+                        }
+                        FastScroller(
+                            state    = listState,
+                            index    = sectionIndex,
+                            modifier = Modifier.align(Alignment.CenterEnd),
                         )
+                        if (syncing) {
+                            LinearProgressIndicator(
+                                modifier = Modifier.fillMaxWidth().align(Alignment.TopCenter)
+                            )
+                        }
                     }
                 }
             }
@@ -578,6 +703,96 @@ private val STATUS_PRIORITY = listOf(
     DownloadStatus.SUCCEEDED,
     DownloadStatus.CANCELLED,
 )
+
+/**
+ * The sort keys and the region chips, one scrolling row each. Rows that scroll
+ * rather than wrap because a No-Intro set can name twenty regions, and a
+ * wrapped row of them in landscape would leave no list underneath.
+ *
+ * The sort is single-choice and a second press on the chosen key reverses it;
+ * the arrow says which way it currently runs. Regions are any-of.
+ */
+@Composable
+private fun ListOptions(
+    sort: RomSort,
+    onSort: (RomSortKey) -> Unit,
+    regions: List<RegionCount>,
+    selected: Set<String>,
+    onToggleRegion: (String) -> Unit,
+    /** Lands on the chosen sort key, the one thing the user is sure to know. */
+    focusRequester: FocusRequester,
+) {
+    Surface(color = MaterialTheme.colorScheme.surfaceContainerLow) {
+        Column(Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
+            OptionRow("Sort") {
+                RomSortKey.entries.forEach { key ->
+                    val chosen = key == sort.key
+                    FilterChip(
+                        selected = chosen,
+                        onClick  = { onSort(key) },
+                        label    = { Text(key.label) },
+                        trailingIcon = if (!chosen) null else {
+                            {
+                                Icon(
+                                    imageVector = if (sort.descending) {
+                                        Icons.Default.ArrowDownward
+                                    } else {
+                                        Icons.Default.ArrowUpward
+                                    },
+                                    contentDescription = if (sort.descending) "Descending" else "Ascending",
+                                    modifier = Modifier.size(FilterChipDefaults.IconSize),
+                                )
+                            }
+                        },
+                        modifier = Modifier
+                            .then(if (chosen) Modifier.focusRequester(focusRequester) else Modifier)
+                            .focusOutline(),
+                    )
+                }
+            }
+            if (regions.isNotEmpty()) {
+                OptionRow("Region") {
+                    regions.forEach { (region, count) ->
+                        val label = if (region == NO_REGION) {
+                            "No region"
+                        } else {
+                            listOfNotNull(regionFlag(region), regionName(region)).joinToString(" ")
+                        }
+                        FilterChip(
+                            selected = region in selected,
+                            onClick  = { onToggleRegion(region) },
+                            // The count says how much a chip is worth pressing;
+                            // a chip picked on another platform reads as zero.
+                            label    = { Text("$label  $count") },
+                            modifier = Modifier.focusOutline(),
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+/** A labelled, sideways-scrolling run of chips. */
+@Composable
+private fun OptionRow(label: String, chips: @Composable RowScope.() -> Unit) {
+    Row(
+        verticalAlignment     = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        modifier              = Modifier
+            .fillMaxWidth()
+            .horizontalScroll(rememberScrollState())
+            .padding(horizontal = 16.dp),
+    ) {
+        Text(
+            text     = label,
+            style    = MaterialTheme.typography.labelLarge,
+            color    = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.width(52.dp),
+        )
+        chips()
+    }
+}
 
 /** The letter a run of rows sits under. Opaque, or the list scrolling beneath
  *  the sticky header shows through it. */
