@@ -251,8 +251,8 @@ fun RomListScreen(
                     listOf(
                         GamepadHint(GamepadButton.A, "Open"),
                         GamepadHint(GamepadButton.X, "Download"),
-                        GamepadHint(GamepadButton.Y, "Filter"),
-                        GamepadHint(GamepadButton.L1, "Letter"),
+                        GamepadHint(GamepadButton.Y, "Search"),
+                        GamepadHint(GamepadButton.L1, GamepadButton.R1, "Prev / Next Letter"),
                         GamepadHint(GamepadButton.B, "Back"),
                     )
                 }

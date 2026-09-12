@@ -45,7 +45,12 @@ enum class GamepadButton(private val xbox: String, private val nintendo: String 
     }
 }
 
-data class GamepadHint(val button: GamepadButton, val label: String)
+/** One legend entry. More than one button when a pair shares a job, as the
+ *  shoulders do stepping letters: drawn as "[L1]/[R1] Prev / Next Letter". */
+data class GamepadHint(val buttons: List<GamepadButton>, val label: String) {
+    constructor(button: GamepadButton, label: String) : this(listOf(button), label)
+    constructor(first: GamepadButton, second: GamepadButton, label: String) : this(listOf(first, second), label)
+}
 
 /** The lettering in force. Not `staticCompositionLocalOf`: it changes when the
  *  user picks the other style in settings. */
@@ -93,7 +98,19 @@ fun GamepadHintBar(hints: List<GamepadHint>, modifier: Modifier = Modifier) {
                     horizontalArrangement = Arrangement.spacedBy(5.dp),
                     verticalAlignment     = Alignment.CenterVertically,
                 ) {
-                    ButtonGlyph(hint.button)
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(2.dp),
+                        verticalAlignment     = Alignment.CenterVertically,
+                    ) {
+                        hint.buttons.forEachIndexed { i, button ->
+                            if (i > 0) Text(
+                                text  = "/",
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                            ButtonGlyph(button)
+                        }
+                    }
                     Text(
                         text  = hint.label,
                         style = MaterialTheme.typography.labelMedium,
