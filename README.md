@@ -1,60 +1,21 @@
 # RomMDroid
 
-A lightweight Android client for [RomM](https://github.com/rommapp/romm) focused on downloading
-games to your device's ROM collection. Think [Grout](https://grout.romm.app/) but for Android -
-browse platforms, find games, and get them into your emulator's folders. That's it.
+![Screenshot showing list of Gameboy games](docs/screenshot.png "Screenshot")
+
+A lightweight Android client for [RomM](https://github.com/rommapp/romm)
+focused on downloading games to your device's ROM collection.
 
 ## Features
 
-- Browse platforms and ROM library
-- Browse collections - pinned above the platform list, no extra layer of navigation
-- Search your whole library
-- Download ROMs directly to per-platform folders (via Android Storage Access Framework)
-- Offline browse from local cache (Room/SQLite)
-- Incremental sync - only fetches what changed since last sync
-- Background download queue with progress notifications (WorkManager)
-- Firmware / BIOS download
-- Client API Token auth (no password stored after setup)
-- Full controller support - every screen is usable without touching the screen
-
-## Controls
-
-Built for Android gaming handhelds: the buttons are the primary input, and the
-hint bar along the bottom of each screen shows what they do (it appears only
-when a controller is attached).
-
-| Button          | Does                                                          |
-| --------------- | ------------------------------------------------------------- |
-| D-pad / L stick | Move between rows and buttons                                 |
-| A               | Open / activate the focused row                               |
-| B               | Back - closes the filter first, then leaves the screen        |
-| X               | Download the focused game; on a ROM's page, all of its files  |
-| Y               | Search or filter, and takes a snackbar's offer while it is up |
-| L1 / R1         | Jump to the previous / next letter in a ROM list              |
-| L2 / R2         | Page up / down                                                |
-| R stick         | Scroll a list freely                                          |
-| Select          | Settings                                                      |
-| Start           | Downloads queue                                               |
-
-Face buttons follow the Android layout - A at the bottom, B on the right -
-regardless of what the device prints on them, so a handheld set to swap A and B
-in its own settings swaps them here too.
-
-The letters in the table are the Xbox ones, which is what Android calls the
-keycodes.  A Nintendo-lettered handheld prints the other pairing on the same
-four positions, and nothing in the Android API reports which one a device uses,
-so **Settings -> Controller** asks: pick "A opens" or "B opens" to match yours.
-It changes only the letters in the hint bar, never what the buttons do.
-
-## Non-goals
-
-- Launching games / emulator integration
-- Full RomM frontend (metadata editing, scraping, virtual/smart collections)
-- Save sync (future)
+- Browse and search platforms and collections in your ROM library
+- Download ROMs directly to per-platform folders
+- Built with Android gaming handhelds in mind, so full controller support
 
 ## Development
 
-### Prerequisites (NixOS)
+### Nix
+
+If you are brave, there's a nix flake based development environment available:
 
 ```bash
 # Enter the dev shell (installs JDK 21, Android SDK, Gradle, openapi-generator-cli, adb)
@@ -82,51 +43,14 @@ gradle installDebug
 nix build
 ```
 
-### Project structure
+## Acknowledgements
 
-```
-app/src/main/java/app/rommdroid/
-  data/
-    api/          # Retrofit interface + models + interceptors
-    db/           # Room entities, DAOs, AppDatabase
-    download/     # DownloadWorker (WorkManager)
-    repository/   # RomRepository, CredentialRepository
-  di/             # Hilt modules (NetworkModule, DatabaseModule)
-  ui/
-    navigation/   # Route definitions
-    screens/      # One file per screen + its ViewModel
-    theme/        # MaterialTheme wrapper
-  util/           # formatSize, etc.
-```
+- This is essentially an Android version of the wonderful
+[Grout](https://grout.romm.app/) for Linux handhelds.
 
-### Renaming the app
+## LLM Usage
 
-1. Change `app_name` in `app/src/main/res/values/strings.xml`
-2. Change `applicationId` in `app/build.gradle.kts`
-3. Rename the package directory `app/rommdroid` -> your new package
-
-The display name is intentionally separated from build identifiers so it's easy to change.
-
-### App icon
-
-`design/logo/rommdroid-icon.svg` is the master asset - a ROM cartridge with a download arrow.
-Everything else is generated from it:
-
-```bash
-python3 design/logo/generate-icons.py
-```
-
-That writes the adaptive-icon layers (`drawable/ic_launcher_{background,foreground,monochrome}.xml`),
-the `mipmap-anydpi-v26` descriptors, the legacy PNGs at all five densities, and a 512 px
-Play Store icon. The master's 512-unit canvas is mapped onto the adaptive icon's 72 dp safe zone,
-so the art survives every launcher mask. Needs `resvg` for the PNGs (in the dev shell); the vector
-drawables generate without it.
-
-## API
-
-RomMDroid uses the RomM REST API (`/api/*`). The live OpenAPI spec is at
-`{your-romm-instance}/openapi.json`. Auth uses **Client API Tokens** (`rmm_...`) stored in
-Android Keystore-backed EncryptedSharedPreferences - no password is retained after first setup.
+Apart from this README, which was written by a human, everything was created by Claude. Apologies for the terrible code quality, overly verbose comments and commit messages, em-dashes, etc.
 
 ## License
 
