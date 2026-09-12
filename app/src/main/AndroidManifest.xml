@@ -6,12 +6,6 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <!-- POST_NOTIFICATIONS for download progress (Android 13+) -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
-    <!-- MANAGE_EXTERNAL_STORAGE for writing to arbitrary ROM folders (API 30+).
-         For API 29 we use SAF (ACTION_OPEN_DOCUMENT_TREE) only, so this is not
-         strictly required but declared for future use. -->
-    <uses-permission
-        android:name="android.permission.MANAGE_EXTERNAL_STORAGE"
-        android:minSdkVersion="30" />
     <!-- FOREGROUND_SERVICE for long-running downloads -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />

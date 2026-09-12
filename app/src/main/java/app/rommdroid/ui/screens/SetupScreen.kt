@@ -3,10 +3,10 @@ package app.rommdroid.ui.screens
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
-import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -59,9 +59,9 @@ fun SetupScreen(
 ) {
     val state by viewModel.state.collectAsState()
 
-    var serverUrl by remember { mutableStateOf("http://") }
-    var username  by remember { mutableStateOf("") }
-    var password  by remember { mutableStateOf("") }
+    var serverUrl by rememberSaveable { mutableStateOf("http://") }
+    var username  by rememberSaveable { mutableStateOf("") }
+    var password  by rememberSaveable { mutableStateOf("") }
 
     // Android's focus search does not cross the Compose/View boundary, so each
     // field is handed the next one explicitly for the keyboard's "Next".

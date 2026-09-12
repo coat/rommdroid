@@ -5,6 +5,7 @@ import app.rommdroid.data.api.model.CollectionSchema
 import app.rommdroid.data.api.model.DetailedRomSchema
 import app.rommdroid.data.api.model.PlatformSchema
 import app.rommdroid.data.api.model.SimpleRomSchema
+import androidx.room.withTransaction
 import app.rommdroid.data.db.*
 import app.rommdroid.util.decodeHtmlEntities
 import app.rommdroid.util.romGroupKey
@@ -19,6 +20,7 @@ import javax.inject.Singleton
 @Singleton
 class RomRepository @Inject constructor(
     private val api: RomMApi,
+    private val db: AppDatabase,
     private val platformDao: PlatformDao,
     private val romDao: RomDao,
     private val collectionDao: CollectionDao,
@@ -53,7 +55,7 @@ class RomRepository @Inject constructor(
      * old server's metadata under the new server's platforms. Downloaded files,
      * folder mappings and the queue are untouched.
      */
-    suspend fun clearLibraryCache() {
+    suspend fun clearLibraryCache() = db.withTransaction {
         platformDao.deleteAll()
         romDao.deleteAll()
         collectionDao.deleteAll()

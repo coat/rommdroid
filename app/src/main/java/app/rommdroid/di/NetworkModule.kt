@@ -55,6 +55,23 @@ object NetworkModule {
         .readTimeout(30, TimeUnit.SECONDS)
         .build()
 
+    /**
+     * Shares the API client's connection pool and auth, but not the base URL
+     * rewrite: a queued download stores an absolute URL built for the server it
+     * was queued from, prefix and all, so it goes out as stored.
+     */
+    @Provides
+    @Singleton
+    @DownloadClient
+    fun provideDownloadClient(
+        apiClient: OkHttpClient,
+        authInterceptor: AuthInterceptor,
+    ): OkHttpClient = apiClient.newBuilder()
+        .apply { interceptors().clear() }
+        .addInterceptor(authInterceptor)
+        .readTimeout(0, TimeUnit.SECONDS)
+        .build()
+
     @Provides
     @Singleton
     fun provideRetrofit(client: OkHttpClient, json: Json): Retrofit = Retrofit.Builder()

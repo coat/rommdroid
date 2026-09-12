@@ -348,12 +348,12 @@ fun RomDetailScreen(
     ) { padding ->
         when (val s = state) {
             is RomDetailState.Loading -> {
-                Box(Modifier.fillMaxSize()) {
+                Box(Modifier.fillMaxSize().padding(padding)) {
                     CircularProgressIndicator(Modifier.align(Alignment.Center))
                 }
             }
             is RomDetailState.Error -> {
-                Box(Modifier.fillMaxSize().padding(24.dp), Alignment.Center) {
+                Box(Modifier.fillMaxSize().padding(padding).padding(24.dp), Alignment.Center) {
                     Text(s.message, color = MaterialTheme.colorScheme.error)
                 }
             }

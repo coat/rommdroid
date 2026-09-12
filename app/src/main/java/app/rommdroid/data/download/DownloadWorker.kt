@@ -17,13 +17,12 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import app.rommdroid.data.db.DownloadDao
 import app.rommdroid.data.db.DownloadStatus
-import app.rommdroid.data.repository.CredentialRepository
+import app.rommdroid.di.DownloadClient
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.withContext
 import java.io.IOException
-import java.util.concurrent.TimeUnit
 
 /**
  * Downloads one ROM file into the SAF folder configured for its platform,
@@ -33,7 +32,7 @@ import java.util.concurrent.TimeUnit
 class DownloadWorker @AssistedInject constructor(
     @Assisted context: Context,
     @Assisted params: WorkerParameters,
-    private val credentials: CredentialRepository,
+    @DownloadClient private val client: OkHttpClient,
     private val downloads: DownloadDao,
     private val localRoms: LocalRomIndex,
 ) : CoroutineWorker(context, params) {
@@ -75,12 +74,6 @@ class DownloadWorker @AssistedInject constructor(
             .putString(KEY_QUEUE_ID, queueId)
             .build()
     }
-
-    // No read timeout: these streams run to gigabytes.
-    private val downloadClient = OkHttpClient.Builder()
-        .connectTimeout(15, TimeUnit.SECONDS)
-        .readTimeout(0, TimeUnit.SECONDS)
-        .build()
 
     /** The downloads-table row this work belongs to, if it came through one. */
     private val queueId: String? get() = inputData.getString(KEY_QUEUE_ID)
@@ -155,18 +148,10 @@ class DownloadWorker @AssistedInject constructor(
         subfolder: String?,
         expectedBytes: Long,
     ) {
-        // Basic auth is the fallback for a setup where token creation was
-        // refused; no credentials at all is a 403.
-        val authHeader = credentials.apiToken?.let { "Bearer $it" }
-            ?: credentials.basicAuthHeader
-        if (authHeader == null) Log.w(TAG, "No credentials stored - request will be unauthenticated")
+        // The client signs the request; no credentials at all is a 403.
+        val request = Request.Builder().url(url).build()
 
-        val request = Request.Builder()
-            .url(url)
-            .apply { if (authHeader != null) header("Authorization", authHeader) }
-            .build()
-
-        downloadClient.newCall(request).execute().use { response ->
+        client.newCall(request).execute().use { response ->
             if (!response.isSuccessful) throw IOException("HTTP ${response.code} ${response.message}")
 
             val body = response.body ?: throw IOException("Empty response body")

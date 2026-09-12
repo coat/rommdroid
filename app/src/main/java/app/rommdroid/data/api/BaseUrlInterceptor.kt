@@ -1,5 +1,6 @@
 package app.rommdroid.data.api
 
+import okhttp3.HttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.Interceptor
 import okhttp3.Response
@@ -8,9 +9,9 @@ import javax.inject.Inject
 import javax.inject.Singleton
 
 /**
- * Rewrites every request's scheme and host to [CredentialRepository.serverUrl].
- * Retrofit needs a base URL at construction time and the user does not supply
- * one until first-run setup, so it is built with a placeholder.
+ * Rewrites every request onto [CredentialRepository.serverUrl]. Retrofit needs
+ * a base URL at construction time and the user does not supply one until
+ * first-run setup, so it is built with a placeholder.
  */
 @Singleton
 class BaseUrlInterceptor @Inject constructor(
@@ -21,18 +22,23 @@ class BaseUrlInterceptor @Inject constructor(
         val serverUrl = credentials.serverUrl
             ?: return chain.proceed(chain.request()) // no server configured yet
 
-        val originalRequest = chain.request()
-        val originalUrl = originalRequest.url
-        val newBase = serverUrl.trimEnd('/').toHttpUrl()
-
-        val newUrl = originalUrl.newBuilder()
-            .scheme(newBase.scheme)
-            .host(newBase.host)
-            .port(newBase.port)
-            .build()
-
-        return chain.proceed(
-            originalRequest.newBuilder().url(newUrl).build()
-        )
+        val request = chain.request()
+        val rebased = request.url.rebase(serverUrl.toHttpUrl())
+        return chain.proceed(request.newBuilder().url(rebased).build())
     }
+}
+
+/**
+ * This URL served from under [base]. The base's path is kept as a prefix, so a
+ * server behind a reverse proxy at `https://host/romm` gets `/romm/api/...`
+ * rather than `/api/...`; the download and artwork URLs already do the same.
+ */
+internal fun HttpUrl.rebase(base: HttpUrl): HttpUrl {
+    val prefix = base.encodedPath.trimEnd('/')
+    return newBuilder()
+        .scheme(base.scheme)
+        .host(base.host)
+        .port(base.port)
+        .encodedPath(prefix + encodedPath)
+        .build()
 }
