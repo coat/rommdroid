@@ -197,20 +197,48 @@ class DownloadQueue @Inject constructor(
         else EnqueueResult.Queued(label, queued)
     }
 
-    /** Re-run a row that failed or was cancelled, without touching the network. */
+    /**
+     * Re-run a row that failed or was cancelled, without touching the network.
+     *
+     * The destination and URL are resolved afresh rather than replayed from the
+     * row: a row outlives the folder mapping and server address it was queued
+     * under, and the usual reason to retry is that one of them has since been
+     * fixed. Replaying the stale values made every retry fail the same way no
+     * matter what the user changed in Settings. Where nothing can be resolved
+     * now, the stored values stand, so the worker reports the real problem.
+     */
     suspend fun retry(id: String) {
         val row = downloads.getById(id) ?: return
         if (!row.status.isFinished) return
-        downloads.updateStatus(id, DownloadStatus.QUEUED, null, System.currentTimeMillis())
+
+        val platform = repo.getPlatform(row.platformId)
+        val target = platform?.let { targets.resolve(it) }
+        val url = credentials.serverUrl?.let { serverUrl ->
+            runCatching {
+                val fileIds = if (row.fileId == 0) emptyList() else listOf(row.fileId)
+                repo.romDownloadUrl(serverUrl, row.romId, row.fileName, fileIds)
+            }.getOrNull()
+        }
+
+        val fresh = row.copy(
+            url             = url ?: row.url,
+            treeUri         = target?.treeUri ?: row.treeUri,
+            subfolder       = if (target != null) target.subfolder else row.subfolder,
+            destinationPath = target?.displayPath ?: row.destinationPath,
+            status          = DownloadStatus.QUEUED,
+            error           = null,
+            updatedAt       = System.currentTimeMillis(),
+        )
+        downloads.upsert(fresh)
         start(
-            id            = row.id,
-            url           = row.url,
-            fileName      = row.fileName,
-            romId         = row.romId,
-            fileId        = row.fileId,
-            expectedBytes = row.sizeBytes,
-            treeUri       = row.treeUri,
-            subfolder     = row.subfolder,
+            id            = fresh.id,
+            url           = fresh.url,
+            fileName      = fresh.fileName,
+            romId         = fresh.romId,
+            fileId        = fresh.fileId,
+            expectedBytes = fresh.sizeBytes,
+            treeUri       = fresh.treeUri,
+            subfolder     = fresh.subfolder,
         )
     }
 
