@@ -128,7 +128,7 @@ jobs:
           VERSION: ${{ steps.apk.outputs.version }}
         run: |
           if [ "v$VERSION" != "$GITHUB_REF_NAME" ]; then
-            echo "::error::Tag $GITHUB_REF_NAME does not match versionName $VERSION in app/build.gradle.kts. Bump the version, merge, then re-tag - see .github/workflows/README-signing.md"
+            echo "::error::Tag $GITHUB_REF_NAME does not match versionName $VERSION in VERSION. Bump the version, merge, then re-tag - see .github/workflows/README-signing.md"
             exit 1
           fi
 

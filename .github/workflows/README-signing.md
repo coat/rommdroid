@@ -115,13 +115,13 @@ with your old local key, so the first new build won't install over it. Run
 
 ## Cutting a version
 
-`versionName` is hand-edited, and the build reads the version out of the source,
-never out of the tag - that's how `v0.2.0` shipped an APK built from
-`versionName = "0.1.0"`. So bump it first and tag the commit carrying the bump:
+The version lives in the `VERSION` file at the repo root; `versionName` in
+`app/build.gradle.kts` and `version` in `flake.nix` both read it from there. The
+build reads the version out of the source, never out of the tag - that's how
+`v0.2.0` shipped an APK built from `versionName = "0.1.0"`. So bump it first and
+tag the commit carrying the bump:
 
-1. Edit `versionName` in `app/build.gradle.kts`. Also bump `version` in
-   `flake.nix` - it only names the Nix derivation's output, but keep the two in
-   step so there's one answer to "what version is this".
+1. Edit `VERSION`.
 2. Commit and merge to `main`.
 3. Tag that commit and push the tag:
 
